@@ -1,6 +1,6 @@
-# CoreMind AI — Backend
+# CoreMind AI — Backend (FastAPI Edition)
 
-> Autonomous Software Engineering Agent backend powered by **NVIDIA open-source models** on **Nebius Token Factory / Nebius AI Cloud**.
+> Autonomous Software Engineering Agent backend built with **Python & FastAPI**, powered by **NVIDIA open-source models** on **Nebius Token Factory / Nebius AI Cloud**.
 
 ---
 
@@ -32,6 +32,7 @@
 
 ## Infrastructure & Model Integration
 
+- **Backend Framework**: [FastAPI](https://fastapi.tiangolo.com) + [Uvicorn](https://www.uvicorn.org) + [Pydantic V2](https://docs.pydantic.dev)
 - **Model Host**: [Nebius Token Factory](https://tokenfactory.nebius.com) / Nebius AI Cloud
 - **Target NVIDIA Foundation Models**:
   - `nvidia/llama-3.1-nemotron-70b-instruct` (Default recommended)
@@ -47,33 +48,44 @@
 
 ```text
 CoreMind-AI-Backend/
-├── package.json               # Dependencies & scripts
-├── tsconfig.json              # TypeScript configuration (ES2022 / NodeNext)
-├── .env.example               # Environment template
-├── .gitignore                 # Ignored build & runtime artifacts
+├── pyproject.toml             # Project metadata & dependencies
+├── requirements.txt           # Pip dependencies
+├── .env.example               # Environment variables template
+├── .gitignore                 # Python, test cache, and sandbox work directory ignore rules
+├── README.md                  # Complete setup, API specification, and architecture guide
 ├── 00-project-overview.md     # Hackathon track & MVP specification
-├── src/
-│   ├── index.ts               # Application entrypoint & HTTP server setup
-│   ├── config/
-│   │   └── env.ts             # Type-safe Zod environment validation
+├── app/
+│   ├── __init__.py            # Package root
+│   ├── main.py                # FastAPI entrypoint, CORS, lifespan & Uvicorn runner
+│   ├── config.py              # Pydantic configuration loaded with python-dotenv
 │   ├── agent/
-│   │   ├── systemPrompt.ts    # Embedded system prompt enforcing 7-phase loop
-│   │   ├── stateMachine.ts    # State machine manager (TASK -> VERIFY) & retries
-│   │   └── executionEngine.ts # Autonomous multi-turn LLM loop & tool dispatcher
+│   │   ├── __init__.py
+│   │   ├── system_prompt.py   # Embedded system prompt enforcing the 7-phase loop
+│   │   ├── state_machine.py   # State machine (TASK -> VERIFY) with retry limits
+│   │   └── execution_engine.py# Multi-turn LLM agent loop & tool dispatcher
 │   ├── providers/
-│   │   └── nebiusClient.ts    # Nebius Token Factory / NVIDIA client
+│   │   ├── __init__.py
+│   │   └── nebius_client.py   # Async Nebius Token Factory / NVIDIA client
 │   ├── tools/
-│   │   ├── types.ts           # Interfaces for workspace tools & execution results
-│   │   ├── registry.ts        # OpenAI tool schemas and execution dispatcher
-│   │   ├── fileTools.ts       # Path-safe read_file, write_file, apply_diff
-│   │   └── sandboxTools.ts    # Sandbox tool adapters for Python & test execution
+│   │   ├── __init__.py
+│   │   ├── types.py           # Pydantic models for workspace tools & results
+│   │   ├── registry.py        # OpenAI tool definitions and async tool dispatcher
+│   │   ├── file_tools.py      # Path-safe read_file, write_file, apply_diff
+│   │   └── sandbox_tools.py   # Sandbox adapters for Python & test execution
 │   ├── sandbox/
-│   │   └── pythonRunner.ts    # Isolated child process runner with traceback parser
-│   └── server/
-│       ├── routes.ts          # Express HTTP & SSE streaming endpoints
-│       └── sseHandler.ts      # Server-Sent Events stream manager
+│   │   ├── __init__.py
+│   │   └── python_runner.py   # Isolated process runner with traceback extraction
+│   └── api/
+│       ├── __init__.py
+│       ├── routes.py          # FastAPI HTTP & SSE streaming endpoints
+│       └── sse_handler.py     # Server-Sent Events stream manager
 └── tests/
-    └── agent.test.ts          # Unit and integration test suite (Vitest)
+    ├── __init__.py
+    ├── test_state_machine.py   # State Machine unit tests
+    ├── test_python_runner.py   # Python Sandbox execution tests
+    ├── test_file_tools.py      # Path-safe file read, write, and patch tests
+    ├── test_tool_registry.py   # OpenAI tools schema and dispatcher tests
+    └── test_execution_engine.py# End-to-end multi-turn loop tests with mock Nebius LLM
 ```
 
 ---
@@ -84,7 +96,7 @@ CoreMind-AI-Backend/
 |---|---|---|
 | `read_file` | `path`, `start_line?`, `end_line?` | Reads workspace file with optional line-range slicing. Protected against directory traversal. |
 | `write_file` | `path`, `content` | Creates directories recursively and writes UTF-8 content. |
-| `apply_diff` | `path`, `patch` | Applies surgical unified diffs or search/replace blocks (`<<<<<<< SEARCH ... ======= ... >>>>>>>`). |
+| `apply_diff` | `path`, `patch` | Applies surgical search/replace block diffs (`<<<<<<< SEARCH ... ======= ... >>>>>>>`). |
 | `run_sandbox_python` | `code?`, `script_path?`, `args?`, `timeout?` | Executes Python code or scripts inside the isolated sandbox with timeout and traceback extraction. |
 | `run_sandbox_tests` | `test_command?`, `test_path?`, `timeout?` | Runs `pytest` or custom test runner, capturing stdout, stderr, and exit codes. |
 
@@ -126,12 +138,14 @@ Directly run Python code in the sandbox without the agent.
 ### 5. `POST /api/sandbox/test`
 Directly run pytest in the sandbox workspace.
 
+### 6. `GET /docs`
+Interactive Swagger / OpenAPI documentation UI.
+
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- **Node.js**: v18+ (tested on Node v25)
 - **Python**: 3.10+ (tested on Python 3.13)
 - **Nebius API Key**: From [Nebius Token Factory](https://tokenfactory.nebius.com)
 
@@ -143,7 +157,7 @@ git clone https://github.com/NVIDIA-CoreMind/CoreMind-AI-Backend.git
 cd CoreMind-AI-Backend
 
 # Install dependencies
-npm install
+pip install -r requirements.txt
 
 # Configure environment variables
 cp .env.example .env
@@ -154,28 +168,29 @@ cp .env.example .env
 Edit `.env` with your Nebius Token Factory credentials:
 ```ini
 PORT=4000
+HOST=0.0.0.0
 NEBIUS_API_KEY=your_nebius_api_key_here
 NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1
 NEBIUS_MODEL=nvidia/llama-3.1-nemotron-70b-instruct
 PYTHON_PATH=python
+SANDBOX_WORK_DIR=./workspace_sandbox
 ```
 
 ### Running the Server
 
 ```bash
-# Development mode (with live reload)
-npm run dev
+# Start with Uvicorn (with live reload)
+python -m uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
 
-# Production build & start
-npm run build
-npm start
+# Or directly:
+python -m app.main
 ```
 
 ### Running Tests
 
 ```bash
-# Run unit and integration tests
-npm test
+# Run full unit and integration test suite
+python -m pytest -v
 ```
 
 ---
