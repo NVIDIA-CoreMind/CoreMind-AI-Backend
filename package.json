@@ -1,0 +1,44 @@
+{
+  "name": "coremind-ai-backend",
+  "version": "1.0.0",
+  "description": "Autonomous software engineering agent backend powered by NVIDIA open-source models on Nebius Token Factory / AI Cloud",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "coremind",
+    "ai-agent",
+    "autonomous-agent",
+    "nebius",
+    "nvidia",
+    "nemotron",
+    "code-generation",
+    "sandbox"
+  ],
+  "author": "CoreMind Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "diff": "^7.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "openai": "^4.86.1",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/diff": "^7.0.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.9",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}
