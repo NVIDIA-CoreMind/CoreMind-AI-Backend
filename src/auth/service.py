@@ -1,8 +1,8 @@
 """
-CoreMind Backend — Authentication Service.
+CoreMind Backend — Google Authentication Service.
 
-Handles user registration, credential verification, Google OAuth2/ID token validation,
-and token generation.
+Handles Google OAuth2 authorization code exchange, Google ID token verification,
+user syncing, and JWT token issuance.
 """
 
 from __future__ import annotations
@@ -16,23 +16,18 @@ from uuid import uuid4
 import httpx
 
 from src.auth.models import (
-    ChangePasswordRequest,
     GoogleAuthRequest,
     GoogleAuthUrlResponse,
     RefreshTokenRequest,
     TokenResponse,
     UpdateProfileRequest,
     User,
-    UserLoginRequest,
-    UserRegisterRequest,
     UserResponse,
 )
 from src.auth.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
-    hash_password,
-    verify_password,
 )
 from src.auth.storage import UserStorage, user_storage
 from src.config import settings
@@ -41,7 +36,7 @@ from src.utils.logger import logger
 
 
 class AuthService:
-    """Core authentication logic for local accounts and Google OAuth."""
+    """Core authentication logic for Google OAuth."""
 
     def __init__(self, storage: UserStorage | None = None) -> None:
         self.storage = storage or user_storage
@@ -78,69 +73,6 @@ class AuthService:
             user=user_resp,
         )
 
-    async def register(self, req: UserRegisterRequest) -> TokenResponse:
-        """Register a new user account with email and password."""
-        email_clean = req.email.strip().lower()
-        existing = self.storage.get_by_email(email_clean)
-        if existing is not None:
-            raise AuthError(
-                ErrorCode.AUTH_USER_EXISTS,
-                f"An account with email '{email_clean}' already exists. Please sign in.",
-            )
-
-        now = self._now_iso()
-        user = User(
-            id=str(uuid4()),
-            email=email_clean,
-            name=req.name.strip(),
-            avatar_url=None,
-            hashed_password=hash_password(req.password),
-            provider="local",
-            google_id=None,
-            role="user",
-            is_active=True,
-            created_at=now,
-            updated_at=now,
-            last_login_at=now,
-        )
-        self.storage.create_user(user)
-        logger.info("auth.registered", user_id=user.id, email=user.email)
-        return self._build_token_response(user)
-
-    async def login(self, req: UserLoginRequest) -> TokenResponse:
-        """Authenticate user with email and password."""
-        email_clean = req.email.strip().lower()
-        user = self.storage.get_by_email(email_clean)
-        if user is None:
-            raise AuthError(
-                ErrorCode.AUTH_INVALID_CREDENTIALS,
-                "Invalid email or password.",
-            )
-
-        if not user.hashed_password:
-            raise AuthError(
-                ErrorCode.AUTH_INVALID_CREDENTIALS,
-                "This account uses Google Sign-In. Please click 'Continue with Google'.",
-            )
-
-        if not verify_password(req.password, user.hashed_password):
-            raise AuthError(
-                ErrorCode.AUTH_INVALID_CREDENTIALS,
-                "Invalid email or password.",
-            )
-
-        if not user.is_active:
-            raise AuthError(
-                ErrorCode.AUTH_FORBIDDEN,
-                "Account is disabled. Please contact support.",
-            )
-
-        now = self._now_iso()
-        self.storage.update_last_login(user.id, now)
-        user.last_login_at = now
-        logger.info("auth.logged_in", user_id=user.id, email=user.email)
-        return self._build_token_response(user)
-
     def get_google_auth_url(
         self, state: str | None = None, redirect_uri: str | None = None
     ) -> GoogleAuthUrlResponse:
@@ -170,7 +102,7 @@ class AuthService:
 
     async def google_auth(self, req: GoogleAuthRequest) -> TokenResponse:
         """
-        Authenticate or create user using Google credentials.
+        Authenticate or register user using Google credentials.
         Supports both:
         1. Google ID token (from One-Tap or Google Sign-In SDK).
         2. Google OAuth authorization code (from OAuth redirect).
@@ -212,7 +144,6 @@ class AuthService:
                 f"Failed to communicate with Google authentication service: {exc}",
             ) from exc
 
-        # Validate token claims
         email = data.get("email")
         google_id = data.get("sub")
         if not email or not google_id:
@@ -221,7 +152,6 @@ class AuthService:
                 "Google token missing required email or subject identification.",
             )
 
-        # Optional client_id check if configured
         if settings.google_client_id and data.get("aud") != settings.google_client_id:
             logger.warn(
                 "auth.google.audience_mismatch",
@@ -268,7 +198,6 @@ class AuthService:
                 token_data = token_resp.json()
                 access_token = token_data.get("access_token")
 
-                # Fetch user info using Google access token
                 userinfo_resp = await client.get(
                     "https://www.googleapis.com/oauth2/v3/userinfo",
                     headers={"Authorization": f"Bearer {access_token}"},
@@ -300,14 +229,11 @@ class AuthService:
         avatar_url = profile["avatar_url"]
         now = self._now_iso()
 
-        # 1. Try to find user by google_id
         user = self.storage.get_by_google_id(google_id)
 
-        # 2. Try to find user by email
         if user is None:
             user = self.storage.get_by_email(email)
             if user is not None:
-                # Link existing email account to Google ID
                 user.google_id = google_id
                 if not user.avatar_url and avatar_url:
                     user.avatar_url = avatar_url
@@ -316,14 +242,12 @@ class AuthService:
                 self.storage.update_user(user)
                 logger.info("auth.google.linked_account", user_id=user.id, email=email)
 
-        # 3. If still no user, create a new Google user
         if user is None:
             user = User(
                 id=str(uuid4()),
                 email=email,
                 name=name,
                 avatar_url=avatar_url,
-                hashed_password=None,
                 provider="google",
                 google_id=google_id,
                 role="user",
@@ -384,29 +308,6 @@ class AuthService:
             created_at=user.created_at,
             last_login_at=user.last_login_at,
         )
-
-    async def change_password(self, user_id: str, req: ChangePasswordRequest) -> None:
-        """Change password for an existing local account."""
-        user = self.storage.get_by_id(user_id)
-        if user is None:
-            raise AuthError(ErrorCode.AUTH_USER_NOT_FOUND, "User not found.")
-
-        if not user.hashed_password:
-            raise AuthError(
-                ErrorCode.AUTH_INVALID_CREDENTIALS,
-                "This account uses Google Sign-In and does not have a local password.",
-            )
-
-        if not verify_password(req.current_password, user.hashed_password):
-            raise AuthError(
-                ErrorCode.AUTH_INVALID_CREDENTIALS,
-                "Current password does not match.",
-            )
-
-        user.hashed_password = hash_password(req.new_password)
-        user.updated_at = self._now_iso()
-        self.storage.update_user(user)
-        logger.info("auth.password_changed", user_id=user.id)
 
 
 # Global singleton service

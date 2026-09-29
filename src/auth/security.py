@@ -1,7 +1,7 @@
 """
-CoreMind Backend — Security, Hashing, and Token Utilities.
+CoreMind Backend — JWT Security and Token Utilities.
 
-Provides secure password hashing via bcrypt and signed JWT tokens via pyjwt.
+Provides secure signed JWT access and refresh token issuing and decoding via pyjwt.
 """
 
 from __future__ import annotations
@@ -9,31 +9,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import bcrypt
 import jwt
 
 from src.config import settings
 from src.utils.errors import AuthError, ErrorCode
-
-
-def hash_password(password: str) -> str:
-    """Hash a plaintext password using bcrypt with salt."""
-    salt = bcrypt.gensalt(rounds=12)
-    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
-    return hashed.decode("utf-8")
-
-
-def verify_password(plain_password: str, hashed_password: str | None) -> bool:
-    """Verify a plaintext password against a bcrypt hash."""
-    if not hashed_password:
-        return False
-    try:
-        return bcrypt.checkpw(
-            plain_password.encode("utf-8"),
-            hashed_password.encode("utf-8"),
-        )
-    except Exception:
-        return False
 
 
 def create_access_token(

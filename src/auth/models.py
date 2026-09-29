@@ -1,14 +1,12 @@
 """
 CoreMind Backend — Authentication Models and Schemas.
 
-Pydantic schemas for user accounts, credentials, tokens, and OAuth.
+Pydantic schemas for Google OAuth user accounts, credentials, and JWT tokens.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
-
-EMAIL_REGEX = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 
 class User(BaseModel):
@@ -20,8 +18,7 @@ class User(BaseModel):
     email: str
     name: str
     avatar_url: str | None = None
-    hashed_password: str | None = None
-    provider: str = "local"  # 'local' | 'google'
+    provider: str = "google"
     google_id: str | None = None
     role: str = "user"  # 'user' | 'admin'
     is_active: bool = True
@@ -30,28 +27,11 @@ class User(BaseModel):
     last_login_at: str | None = None
 
 
-class UserRegisterRequest(BaseModel):
-    """Payload for creating a new local account."""
-
-    email: str = Field(..., pattern=EMAIL_REGEX, description="User's valid email address")
-    password: str = Field(
-        ..., min_length=6, max_length=128, description="Account password (min 6 chars)"
-    )
-    name: str = Field(..., min_length=1, max_length=100, description="User's display or full name")
-
-
-class UserLoginRequest(BaseModel):
-    """Payload for logging into an existing account."""
-
-    email: str = Field(..., pattern=EMAIL_REGEX, description="Registered email address")
-    password: str = Field(..., min_length=1, description="Account password")
-
-
 class GoogleAuthRequest(BaseModel):
     """
     Payload for Google Authentication.
     Accepts either an ID token (from Google One-Tap or Google Sign-In SDK)
-    or an OAuth authorization code.
+    or an OAuth authorization code from Google OAuth redirect.
     """
 
     id_token: str | None = Field(
@@ -77,7 +57,7 @@ class GoogleAuthUrlResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """Safe user profile response without secrets."""
+    """Safe user profile response."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,7 +65,7 @@ class UserResponse(BaseModel):
     email: str
     name: str
     avatar_url: str | None = None
-    provider: str
+    provider: str = "google"
     role: str
     created_at: str
     last_login_at: str | None = None
@@ -112,10 +92,3 @@ class UpdateProfileRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
     avatar_url: str | None = Field(default=None, max_length=500)
-
-
-class ChangePasswordRequest(BaseModel):
-    """Payload for changing local account password."""
-
-    current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6, max_length=128)

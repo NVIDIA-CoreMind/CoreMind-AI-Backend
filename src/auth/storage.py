@@ -16,7 +16,7 @@ from src.utils.logger import logger
 
 
 class UserStorage:
-    """Thread-safe SQLite storage for user accounts and profiles."""
+    """Thread-safe SQLite storage for Google user accounts and profiles."""
 
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = db_path or settings.sqlite_db_path
@@ -40,8 +40,7 @@ class UserStorage:
                     email TEXT UNIQUE NOT NULL,
                     name TEXT NOT NULL,
                     avatar_url TEXT,
-                    hashed_password TEXT,
-                    provider TEXT NOT NULL DEFAULT 'local',
+                    provider TEXT NOT NULL DEFAULT 'google',
                     google_id TEXT,
                     role TEXT NOT NULL DEFAULT 'user',
                     is_active INTEGER NOT NULL DEFAULT 1,
@@ -65,7 +64,6 @@ class UserStorage:
             email=row["email"],
             name=row["name"],
             avatar_url=row["avatar_url"],
-            hashed_password=row["hashed_password"],
             provider=row["provider"],
             google_id=row["google_id"],
             role=row["role"],
@@ -96,22 +94,21 @@ class UserStorage:
             return self._row_to_user(cursor.fetchone())
 
     def create_user(self, user: User) -> User:
-        """Insert a newly registered user into the database."""
+        """Insert a new Google authenticated user into the database."""
         with self._lock, self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO users (
-                    id, email, name, avatar_url, hashed_password,
+                    id, email, name, avatar_url,
                     provider, google_id, role, is_active,
                     created_at, updated_at, last_login_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.id,
                     user.email.lower().strip(),
                     user.name.strip(),
                     user.avatar_url,
-                    user.hashed_password,
                     user.provider,
                     user.google_id,
                     user.role,
@@ -133,7 +130,6 @@ class UserStorage:
                 UPDATE users SET
                     name = ?,
                     avatar_url = ?,
-                    hashed_password = ?,
                     provider = ?,
                     google_id = ?,
                     role = ?,
@@ -145,7 +141,6 @@ class UserStorage:
                 (
                     user.name.strip(),
                     user.avatar_url,
-                    user.hashed_password,
                     user.provider,
                     user.google_id,
                     user.role,

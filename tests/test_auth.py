@@ -1,14 +1,13 @@
 """
-Tests for CoreMind Authentication System.
+Tests for CoreMind Google Authentication System.
 
 Covers:
-- Local email/password registration & login
-- Google OAuth URL generation & Google sign-in
-- JWT generation, validation, and token refresh
+- Google OAuth URL generation & consent flow
+- Google ID token verification and user syncing
+- JWT token issuing, validation, and refresh
 - User profile retrieval and updating
-- Password changing
-- Protected route dependencies
-- Interactive Antigravity auth portal
+- Bearer token authentication dependencies
+- Antigravity Google Auth portal UI
 """
 
 from __future__ import annotations
@@ -22,10 +21,10 @@ from fastapi.testclient import TestClient
 from src.app.application import create_app
 from src.auth.models import (
     GoogleAuthRequest,
-    UserLoginRequest,
-    UserRegisterRequest,
+    RefreshTokenRequest,
+    UpdateProfileRequest,
 )
-from src.auth.security import create_access_token, decode_token, hash_password, verify_password
+from src.auth.security import create_access_token, decode_token
 from src.auth.service import AuthService
 from src.auth.storage import UserStorage
 from src.utils.errors import AuthError, ErrorCode
@@ -55,100 +54,29 @@ def client(temp_storage):
         yield TestClient(app)
 
 
-# ── Security & Hashing Tests ─────────────────────────────────────────
-
-def test_password_hashing():
-    """Test bcrypt hashing and verification."""
-    password = "SuperSecretPassword123!"
-    hashed = hash_password(password)
-    assert hashed != password
-    assert verify_password(password, hashed) is True
-    assert verify_password("WrongPassword", hashed) is False
-    assert verify_password(password, None) is False
-
+# ── JWT Security Tests ───────────────────────────────────────────────
 
 def test_jwt_access_and_refresh_tokens():
     """Test JWT access token creation and decoding."""
     token, expires_in = create_access_token(
-        user_id="user-123",
-        email="test@coremind.ai",
-        extra_claims={"role": "user"},
+        user_id="google-user-123",
+        email="developer@gmail.com",
+        extra_claims={"role": "user", "name": "Google Dev"},
     )
     assert expires_in > 0
     payload = decode_token(token, expected_type="access")
-    assert payload["sub"] == "user-123"
-    assert payload["email"] == "test@coremind.ai"
-    assert payload["role"] == "user"
+    assert payload["sub"] == "google-user-123"
+    assert payload["email"] == "developer@gmail.com"
+    assert payload["name"] == "Google Dev"
     assert payload["type"] == "access"
 
 
 def test_jwt_invalid_token_type():
     """Test decoding fails when token type mismatches."""
-    token, _ = create_access_token(user_id="user-123", email="test@coremind.ai")
+    token, _ = create_access_token(user_id="user-123", email="dev@gmail.com")
     with pytest.raises(AuthError) as exc_info:
         decode_token(token, expected_type="refresh")
     assert exc_info.value.code == ErrorCode.AUTH_TOKEN_INVALID
-
-
-# ── Registration & Login Flow Tests ─────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_register_and_login_flow(auth_service: AuthService):
-    """Test complete register and subsequent login cycle."""
-    # 1. Register
-    reg_req = UserRegisterRequest(
-        email="ada@coremind.ai",
-        password="AdaPassword2026!",
-        name="Ada Lovelace",
-    )
-    res = await auth_service.register(reg_req)
-    assert res.access_token
-    assert res.refresh_token
-    assert res.user.email == "ada@coremind.ai"
-    assert res.user.name == "Ada Lovelace"
-    assert res.user.provider == "local"
-
-    # 2. Login
-    login_req = UserLoginRequest(
-        email="ada@coremind.ai",
-        password="AdaPassword2026!",
-    )
-    login_res = await auth_service.login(login_req)
-    assert login_res.access_token
-    assert login_res.user.email == "ada@coremind.ai"
-
-
-@pytest.mark.asyncio
-async def test_register_duplicate_email(auth_service: AuthService):
-    """Test registering with an existing email raises AUTH_USER_EXISTS."""
-    reg_req = UserRegisterRequest(
-        email="duplicate@coremind.ai",
-        password="Password123!",
-        name="User One",
-    )
-    await auth_service.register(reg_req)
-
-    with pytest.raises(AuthError) as exc_info:
-        await auth_service.register(reg_req)
-    assert exc_info.value.code == ErrorCode.AUTH_USER_EXISTS
-
-
-@pytest.mark.asyncio
-async def test_login_invalid_password(auth_service: AuthService):
-    """Test login with wrong password raises AUTH_INVALID_CREDENTIALS."""
-    await auth_service.register(
-        UserRegisterRequest(
-            email="test@coremind.ai",
-            password="CorrectPassword123!",
-            name="Tester",
-        )
-    )
-
-    with pytest.raises(AuthError) as exc_info:
-        await auth_service.login(
-            UserLoginRequest(email="test@coremind.ai", password="WrongPassword!")
-        )
-    assert exc_info.value.code == ErrorCode.AUTH_INVALID_CREDENTIALS
 
 
 # ── Google OAuth Tests ───────────────────────────────────────────────
@@ -164,70 +92,97 @@ def test_google_auth_url(auth_service: AuthService):
 @pytest.mark.asyncio
 async def test_google_auth_with_token(auth_service: AuthService):
     """Test Continue with Google via Google ID token."""
-    mock_tokeninfo = {
-        "sub": "google-uid-998877",
-        "email": "google.dev@example.com",
-        "name": "Google Developer",
-        "picture": "https://lh3.googleusercontent.com/avatar.jpg",
-        "email_verified": "true",
+    mock_profile = {
+        "google_id": "google-uid-998877",
+        "email": "alex.mercer@gmail.com",
+        "name": "Alex Mercer",
+        "avatar_url": "https://lh3.googleusercontent.com/avatar.jpg",
     }
 
     with patch.object(
         auth_service, "_verify_google_id_token", new_callable=AsyncMock
     ) as mock_verify:
-        mock_verify.return_value = {
-            "google_id": mock_tokeninfo["sub"],
-            "email": mock_tokeninfo["email"],
-            "name": mock_tokeninfo["name"],
-            "avatar_url": mock_tokeninfo["picture"],
-        }
+        mock_verify.return_value = mock_profile
 
         res = await auth_service.google_auth(
             GoogleAuthRequest(id_token="mock_valid_google_id_token")
         )
         assert res.access_token
-        assert res.user.email == "google.dev@example.com"
-        assert res.user.name == "Google Developer"
+        assert res.user.email == "alex.mercer@gmail.com"
+        assert res.user.name == "Alex Mercer"
         assert res.user.provider == "google"
         assert res.user.avatar_url == "https://lh3.googleusercontent.com/avatar.jpg"
 
-        # Verify password login fails with friendly Google prompt
-        with pytest.raises(AuthError) as exc_info:
-            await auth_service.login(
-                UserLoginRequest(email="google.dev@example.com", password="any_password")
-            )
-        assert "Google Sign-In" in str(exc_info.value)
+
+@pytest.mark.asyncio
+async def test_google_auth_refresh_token_and_profile(auth_service: AuthService):
+    """Test token refresh and profile update."""
+    mock_profile = {
+        "google_id": "google-uid-112233",
+        "email": "dev.user@gmail.com",
+        "name": "Dev User",
+        "avatar_url": None,
+    }
+
+    with patch.object(
+        auth_service, "_verify_google_id_token", new_callable=AsyncMock
+    ) as mock_verify:
+        mock_verify.return_value = mock_profile
+        login_res = await auth_service.google_auth(GoogleAuthRequest(id_token="token"))
+
+    # Refresh token
+    refresh_res = await auth_service.refresh_token(
+        RefreshTokenRequest(refresh_token=login_res.refresh_token)
+    )
+    assert refresh_res.access_token
+    assert refresh_res.user.email == "dev.user@gmail.com"
+
+    # Update profile
+    updated_profile = await auth_service.update_profile(
+        user_id=login_res.user.id,
+        req=UpdateProfileRequest(name="Dev User Updated", avatar_url="https://avatar.png"),
+    )
+    assert updated_profile.name == "Dev User Updated"
+    assert updated_profile.avatar_url == "https://avatar.png"
 
 
 # ── API Route Integration Tests ──────────────────────────────────────
 
-def test_api_auth_register_and_me(client: TestClient):
-    """Test POST /v1/auth/register, then GET /v1/auth/me with Bearer token."""
-    # 1. Register via HTTP API
-    reg_payload = {
-        "email": "newuser@coremind.ai",
-        "password": "Password789!",
-        "name": "New CoreMind Dev",
+def test_api_google_auth_and_me(client: TestClient):
+    """Test POST /v1/auth/google, then GET /v1/auth/me with Bearer token."""
+    mock_profile = {
+        "google_id": "google-uid-api-test",
+        "email": "coremind.dev@gmail.com",
+        "name": "CoreMind Dev",
+        "avatar_url": "https://avatar.jpg",
     }
-    reg_res = client.post("/v1/auth/register", json=reg_payload)
-    assert reg_res.status_code == 201
-    data = reg_res.json()
-    assert "access_token" in data
-    token = data["access_token"]
 
-    # 2. Access protected /v1/auth/me
-    me_res = client.get(
-        "/v1/auth/me",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert me_res.status_code == 200
-    user_info = me_res.json()
-    assert user_info["email"] == "newuser@coremind.ai"
-    assert user_info["name"] == "New CoreMind Dev"
+    with patch(
+        "src.auth.service.auth_service._verify_google_id_token", new_callable=AsyncMock
+    ) as mock_verify:
+        mock_verify.return_value = mock_profile
 
-    # 3. Access without token should return 401
-    unauth_res = client.get("/v1/auth/me")
-    assert unauth_res.status_code == 401
+        # 1. Sign in with Google
+        res = client.post("/v1/auth/google", json={"id_token": "valid_token"})
+        assert res.status_code == 200
+        data = res.json()
+        assert "access_token" in data
+        token = data["access_token"]
+
+        # 2. Access protected /v1/auth/me
+        me_res = client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert me_res.status_code == 200
+        user_info = me_res.json()
+        assert user_info["email"] == "coremind.dev@gmail.com"
+        assert user_info["name"] == "CoreMind Dev"
+        assert user_info["provider"] == "google"
+
+        # 3. Access without token should return 401
+        unauth_res = client.get("/v1/auth/me")
+        assert unauth_res.status_code == 401
 
 
 def test_api_auth_portal_ui(client: TestClient):
@@ -237,5 +192,3 @@ def test_api_auth_portal_ui(client: TestClient):
     assert "text/html" in res.headers["content-type"]
     assert "Welcome to Antigravity" in res.text
     assert "Continue with Google" in res.text
-    assert "Create Account" in res.text
-    assert "Sign In" in res.text

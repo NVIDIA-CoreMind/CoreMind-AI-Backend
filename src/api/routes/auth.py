@@ -1,15 +1,12 @@
 """
-CoreMind Backend — Authentication API Routes.
+CoreMind Backend — Google Authentication API Routes.
 
 Endpoints:
-- POST /v1/auth/register         — Create a new account with email & password
-- POST /v1/auth/login            — Sign in with email & password
 - POST /v1/auth/google           — Sign in / Sign up with Google (ID Token or Auth Code)
 - GET  /v1/auth/google/url       — Get Google OAuth2 authorization consent URL
 - GET  /v1/auth/google/callback  — OAuth callback handler for browser/IDE redirect
 - GET  /v1/auth/me               — Get current authenticated user profile
 - PATCH /v1/auth/profile         — Update user name and avatar
-- POST /v1/auth/change-password  — Change account password
 - POST /v1/auth/refresh          — Refresh access token using refresh token
 - POST /v1/auth/logout           — Invalidate session
 """
@@ -23,35 +20,18 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.auth.dependencies import get_current_user
 from src.auth.models import (
-    ChangePasswordRequest,
     GoogleAuthRequest,
     GoogleAuthUrlResponse,
     RefreshTokenRequest,
     TokenResponse,
     UpdateProfileRequest,
     User,
-    UserLoginRequest,
-    UserRegisterRequest,
     UserResponse,
 )
 from src.auth.service import auth_service
 from src.utils.logger import logger
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
-
-
-@router.post("/register", response_model=TokenResponse, status_code=201)
-async def register(req: UserRegisterRequest) -> TokenResponse:
-    """Create a new user account with email and password."""
-    logger.info("api.auth.register", email=req.email)
-    return await auth_service.register(req)
-
-
-@router.post("/login", response_model=TokenResponse)
-async def login(req: UserLoginRequest) -> TokenResponse:
-    """Sign in to an existing account with email and password."""
-    logger.info("api.auth.login", email=req.email)
-    return await auth_service.login(req)
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -163,7 +143,7 @@ async def google_callback(
 async def get_current_user_profile(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserResponse:
-    """Get the currently authenticated user's profile."""
+    """Get the currently authenticated Google user's profile."""
     return UserResponse(
         id=current_user.id,
         email=current_user.email,
@@ -183,16 +163,6 @@ async def update_profile(
 ) -> UserResponse:
     """Update profile information (name, avatar) for current user."""
     return await auth_service.update_profile(current_user.id, req)
-
-
-@router.post("/change-password")
-async def change_password(
-    req: ChangePasswordRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> dict[str, str]:
-    """Change the password for the current local account."""
-    await auth_service.change_password(current_user.id, req)
-    return {"status": "ok", "message": "Password changed successfully."}
 
 
 @router.post("/refresh", response_model=TokenResponse)
