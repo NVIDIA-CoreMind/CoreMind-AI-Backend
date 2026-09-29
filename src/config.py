@@ -47,6 +47,35 @@ class Settings(BaseSettings):
     sandbox_type: str = Field(default="local", pattern=r"^(local|nebius)$")
     sandbox_working_dir: str = Field(default="")
 
+    # ── Authentication & JWT ────────────────────────────────────────
+    jwt_secret_key: str = Field(
+        default="coremind-super-secret-jwt-key-2026-production-ready",
+        description="Secret key for signing CoreMind auth JWT tokens",
+    )
+    jwt_algorithm: str = Field(default="HS256")
+    jwt_access_token_expire_minutes: int = Field(default=60 * 24 * 7)  # 7 days
+    jwt_refresh_token_expire_days: int = Field(default=30)
+
+    # ── Google OAuth ────────────────────────────────────────────────
+    google_client_id: str = Field(
+        default="",
+        description="Google OAuth Client ID",
+    )
+    google_client_secret: str = Field(
+        default="",
+        description="Google OAuth Client Secret",
+    )
+    google_redirect_uri: str = Field(
+        default="http://localhost:43110/v1/auth/google/callback",
+        description="Google OAuth Redirect URI callback",
+    )
+
+    # ── Database ────────────────────────────────────────────────────
+    sqlite_db_path: str = Field(
+        default="data/coremind.db",
+        description="Path to local SQLite database for user accounts and state",
+    )
+
     # ── Logging ─────────────────────────────────────────────────────
     log_level: str = Field(default="info", pattern=r"^(debug|info|warn|error|fatal)$")
 

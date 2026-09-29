@@ -44,11 +44,32 @@ class ErrorCode(StrEnum):
     AGENT_INVALID_STATE = "AGENT_INVALID_STATE"
     AGENT_NOT_FOUND = "AGENT_NOT_FOUND"
 
+    # Auth errors
+    AUTH_INVALID_CREDENTIALS = "AUTH_INVALID_CREDENTIALS"
+    AUTH_USER_EXISTS = "AUTH_USER_EXISTS"
+    AUTH_USER_NOT_FOUND = "AUTH_USER_NOT_FOUND"
+    AUTH_UNAUTHORIZED = "AUTH_UNAUTHORIZED"
+    AUTH_FORBIDDEN = "AUTH_FORBIDDEN"
+    AUTH_TOKEN_EXPIRED = "AUTH_TOKEN_EXPIRED"
+    AUTH_TOKEN_INVALID = "AUTH_TOKEN_INVALID"
+    AUTH_GOOGLE_FAILED = "AUTH_GOOGLE_FAILED"
+
     # System errors
     CONFIG_INVALID = "CONFIG_INVALID"
     BACKEND_UNAVAILABLE = "BACKEND_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
+
+_AUTH_STATUS_MAP: dict[ErrorCode, int] = {
+    ErrorCode.AUTH_INVALID_CREDENTIALS: 401,
+    ErrorCode.AUTH_USER_EXISTS: 409,
+    ErrorCode.AUTH_USER_NOT_FOUND: 404,
+    ErrorCode.AUTH_UNAUTHORIZED: 401,
+    ErrorCode.AUTH_FORBIDDEN: 403,
+    ErrorCode.AUTH_TOKEN_EXPIRED: 401,
+    ErrorCode.AUTH_TOKEN_INVALID: 401,
+    ErrorCode.AUTH_GOOGLE_FAILED: 400,
+}
 
 _AI_STATUS_MAP: dict[ErrorCode, int] = {
     ErrorCode.AI_AUTH_FAILURE: 401,
@@ -126,3 +147,13 @@ class AgentError(CoreMindError):
         self, code: ErrorCode, message: str, details: dict[str, Any] | None = None
     ) -> None:
         super().__init__(code, message, 500, details)
+
+
+class AuthError(CoreMindError):
+    """Errors from the authentication layer."""
+
+    def __init__(
+        self, code: ErrorCode, message: str, details: dict[str, Any] | None = None
+    ) -> None:
+        status = _AUTH_STATUS_MAP.get(code, 401)
+        super().__init__(code, message, status, details)

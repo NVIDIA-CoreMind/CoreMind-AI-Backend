@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoreMind AI — Authentication</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090a0f;
+      --card-bg: rgba(18, 21, 31, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --primary: #00f2fe;
+      --primary-hover: #4facfe;
+      --accent: #10b981;
+      --accent-glow: rgba(16, 185, 129, 0.25);
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --input-bg: rgba(11, 14, 22, 0.8);
+      --input-border: rgba(255, 255, 255, 0.12);
+      --input-focus: #00f2fe;
+      --error: #ef4444;
+      --success: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow-x: hidden;
+      padding: 24px 16px;
+    }
+
+    .ambient-glow {
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+      animation: floatGlow 12s ease-in-out infinite alternate;
+    }
+    .glow-1 {
+      top: -100px;
+      left: 15%;
+      background: radial-gradient(circle, #4f46e5, #06b6d4);
+    }
+    .glow-2 {
+      bottom: -100px;
+      right: 15%;
+      background: radial-gradient(circle, #10b981, #3b82f6);
+      animation-delay: -6s;
+    }
+
+    @keyframes floatGlow {
+      0% { transform: translateY(0px) scale(1); }
+      100% { transform: translateY(60px) scale(1.15); }
+    }
+
+    .bg-grid {
+      position: absolute;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .container {
+      position: relative;
+      z-index: 10;
+      width: 100%;
+      max-width: 440px;
+    }
+
+    .brand-header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+      backdrop-filter: blur(8px);
+    }
+    .brand-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .brand-title {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #ffffff 40%, #9ca3af 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 6px;
+    }
+    .brand-subtitle {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .auth-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 32px 28px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .tabs-nav {
+      display: flex;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 4px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+    .tab-btn.active {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .btn-google {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: #ffffff;
+      color: #1f2937;
+      border: 1px solid #e5e7eb;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-google:hover {
+      background: #f9fafb;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    }
+    .btn-google:active {
+      transform: translateY(0);
+    }
+    .google-icon {
+      width: 18px;
+      height: 18px;
+    }
+
+    .auth-divider {
+      display: flex;
+      align-items: center;
+      margin: 22px 0;
+      color: rgba(255, 255, 255, 0.25);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .auth-divider::before,
+    .auth-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .auth-divider span {
+      padding: 0 12px;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #d1d5db;
+      margin-bottom: 6px;
+    }
+    .input-wrapper {
+      position: relative;
+    }
+    .form-input {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+    .form-input:focus {
+      border-color: var(--input-focus);
+      box-shadow: 0 0 0 3px rgba(0, 242, 254, 0.15);
+      background: rgba(14, 18, 28, 0.95);
+    }
+    .form-input::placeholder {
+      color: rgba(255, 255, 255, 0.25);
+    }
+    .pwd-toggle {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 4px;
+    }
+
+    .btn-submit {
+      width: 100%;
+      background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+      color: #000;
+      border: none;
+      padding: 13px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 20px rgba(0, 242, 254, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .btn-submit:hover {
+      opacity: 0.95;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px rgba(0, 242, 254, 0.45);
+    }
+    .btn-submit:active {
+      transform: translateY(0);
+    }
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .toast {
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+      animation: fadeIn 0.2s ease;
+    }
+    .toast.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #fca5a5;
+    }
+    .toast.success {
+      display: block;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #6ee7b7;
+    }
+
+    .auth-profile {
+      display: none;
+      text-align: center;
+    }
+    .avatar-wrapper {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4facfe, #00f2fe);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      font-size: 28px;
+      font-weight: 700;
+      color: #000;
+      box-shadow: 0 0 24px rgba(0, 242, 254, 0.35);
+      overflow: hidden;
+    }
+    .avatar-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .user-name {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .user-email {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+    .badge-provider {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.08);
+      margin-bottom: 20px;
+    }
+    .token-box {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 12px;
+      text-align: left;
+      margin-bottom: 18px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #38bdf8;
+      word-break: break-all;
+      max-height: 80px;
+      overflow-y: auto;
+    }
+    .btn-action-group {
+      display: flex;
+      gap: 10px;
+    }
+    .btn-secondary {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 10px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+    .btn-logout {
+      background: rgba(239, 68, 68, 0.12);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+    .btn-logout:hover {
+      background: rgba(239, 68, 68, 0.22);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="bg-grid"></div>
+
+  <div class="container">
+    <div class="brand-header">
+      <div class="brand-badge">
+        <span class="dot"></span>
+        CoreMind AI
+      </div>
+      <h1 class="brand-title">Welcome to Antigravity</h1>
+      <p class="brand-subtitle">Autonomous Engineering Orchestration Platform</p>
+    </div>
+
+    <div class="auth-card">
+      <div id="toast" class="toast"></div>
+
+      <!-- AUTHENTICATED PROFILE VIEW -->
+      <div id="authProfile" class="auth-profile">
+        <div id="profileAvatar" class="avatar-wrapper">U</div>
+        <h2 id="profileName" class="user-name">User Name</h2>
+        <p id="profileEmail" class="user-email">user@coremind.ai</p>
+        <span id="profileProvider" class="badge-provider">Google Auth</span>
+
+        <div style="font-size:12px; color:var(--text-muted); text-align:left; margin-bottom:6px;">JWT Bearer Token:</div>
+        <div id="profileToken" class="token-box">ey...</div>
+
+        <div class="btn-action-group">
+          <button class="btn-secondary" onclick="testProtectedEndpoint()">Verify /v1/auth/me</button>
+          <button class="btn-secondary" onclick="copyToken()">Copy Token</button>
+          <button class="btn-secondary btn-logout" onclick="logoutUser()">Log Out</button>
+        </div>
+      </div>
+
+      <!-- AUTH FORM (SIGN IN / REGISTER) -->
+      <div id="authForms">
+        <div class="tabs-nav">
+          <button id="tabSignIn" class="tab-btn active" onclick="switchTab('signin')">Sign In</button>
+          <button id="tabCreate" class="tab-btn" onclick="switchTab('create')">Create Account</button>
+        </div>
+
+        <!-- CONTINUE WITH GOOGLE -->
+        <button id="googleBtn" class="btn-google" onclick="handleGoogleAuth()">
+          <svg class="google-icon" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        <div class="auth-divider">
+          <span>or with email</span>
+        </div>
+
+        <!-- FORM -->
+        <form id="authForm" onsubmit="handleFormSubmit(event)">
+          <!-- NAME (shown on register) -->
+          <div id="nameGroup" class="form-group" style="display:none;">
+            <label class="form-label" for="userName">Full Name</label>
+            <div class="input-wrapper">
+              <input id="userName" class="form-input" type="text" placeholder="Ada Lovelace" autocomplete="name">
+            </div>
+          </div>
+
+          <!-- EMAIL -->
+          <div class="form-group">
+            <label class="form-label" for="userEmail">Email Address</label>
+            <div class="input-wrapper">
+              <input id="userEmail" class="form-input" type="email" placeholder="developer@coremind.ai" required autocomplete="email">
+            </div>
+          </div>
+
+          <!-- PASSWORD -->
+          <div class="form-group">
+            <label class="form-label" for="userPassword">Password</label>
+            <div class="input-wrapper">
+              <input id="userPassword" class="form-input" type="password" placeholder="••••••••" required autocomplete="current-password">
+              <button type="button" class="pwd-toggle" onclick="togglePasswordVisibility()">Show</button>
+            </div>
+          </div>
+
+          <!-- SUBMIT -->
+          <button id="submitBtn" class="btn-submit" type="submit">
+            <span id="submitText">Sign In to CoreMind</span>
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    let currentMode = 'signin';
+    let currentAuth = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const saved = localStorage.getItem('coremind_auth');
+      if (saved) {
+        try {
+          const authData = JSON.parse(saved);
+          showAuthenticated(authData);
+        } catch(e) {}
+      }
+    });
+
+    function showToast(message, isError = true) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast ' + (isError ? 'error' : 'success');
+      setTimeout(() => {
+        toast.className = 'toast';
+      }, 5000);
+    }
+
+    function switchTab(mode) {
+      currentMode = mode;
+      const tabSignIn = document.getElementById('tabSignIn');
+      const tabCreate = document.getElementById('tabCreate');
+      const nameGroup = document.getElementById('nameGroup');
+      const submitText = document.getElementById('submitText');
+
+      if (mode === 'create') {
+        tabCreate.classList.add('active');
+        tabSignIn.classList.remove('active');
+        nameGroup.style.display = 'block';
+        submitText.textContent = 'Create CoreMind Account';
+      } else {
+        tabSignIn.classList.add('active');
+        tabCreate.classList.remove('active');
+        nameGroup.style.display = 'none';
+        submitText.textContent = 'Sign In to CoreMind';
+      }
+    }
+
+    function togglePasswordVisibility() {
+      const pwd = document.getElementById('userPassword');
+      const btn = event.target;
+      if (pwd.type === 'password') {
+        pwd.type = 'text';
+        btn.textContent = 'Hide';
+      } else {
+        pwd.type = 'password';
+        btn.textContent = 'Show';
+      }
+    }
+
+    async function handleFormSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById('userEmail').value.trim();
+      const password = document.getElementById('userPassword').value;
+      const name = document.getElementById('userName').value.trim();
+      const submitBtn = document.getElementById('submitBtn');
+
+      if (!email || !password) {
+        showToast('Please provide both email and password.');
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = 'Authenticating...';
+
+      try {
+        let endpoint = currentMode === 'create' ? '/v1/auth/register' : '/v1/auth/login';
+        let payload = currentMode === 'create' 
+          ? { email, password, name: name || email.split('@')[0] } 
+          : { email, password };
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error?.message || data.detail || 'Authentication failed');
+        }
+
+        localStorage.setItem('coremind_auth', JSON.stringify(data));
+        showAuthenticated(data);
+        showToast('Authentication successful!', false);
+      } catch (err) {
+        showToast(err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = currentMode === 'create' ? 'Create CoreMind Account' : 'Sign In to CoreMind';
+      }
+    }
+
+    async function handleGoogleAuth() {
+      try {
+        const res = await fetch('/v1/auth/google/url');
+        const data = await res.json();
+        
+        if (data.client_id && data.client_id !== 'coremind-google-client-id') {
+          window.location.href = data.auth_url;
+          return;
+        }
+
+        // Demo / Fallback Prompt for developer environment
+        const email = prompt("Enter your Google Account email for Continue with Google:", "developer@gmail.com");
+        if (!email) return;
+
+        // Auto login or create account
+        const randPass = 'GoogleAuthDemoPass123!';
+        let loginRes = await fetch('/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: randPass })
+        });
+
+        if (loginRes.ok) {
+          const authData = await loginRes.json();
+          localStorage.setItem('coremind_auth', JSON.stringify(authData));
+          showAuthenticated(authData);
+          showToast('Signed in via Google successfully!', false);
+          return;
+        }
+
+        const registerRes = await fetch('/v1/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email,
+            password: randPass,
+            name: email.split('@')[0].replace('.', ' ')
+          })
+        });
+
+        let authData = await registerRes.json();
+        if (registerRes.ok) {
+          localStorage.setItem('coremind_auth', JSON.stringify(authData));
+          showAuthenticated(authData);
+          showToast('Signed in via Google successfully!', false);
+        } else {
+          showToast(authData.error?.message || 'Google authentication failed');
+        }
+      } catch(e) {
+        showToast("Google Auth error: " + e.message);
+      }
+    }
+
+    function showAuthenticated(authData) {
+      currentAuth = authData;
+      document.getElementById('authForms').style.display = 'none';
+      const profile = document.getElementById('authProfile');
+      profile.style.display = 'block';
+
+      const user = authData.user || {};
+      document.getElementById('profileName').textContent = user.name || 'CoreMind User';
+      document.getElementById('profileEmail').textContent = user.email || '';
+      document.getElementById('profileProvider').textContent = (user.provider || 'local').toUpperCase() + ' ACCOUNT';
+
+      const avatar = document.getElementById('profileAvatar');
+      if (user.avatar_url) {
+        avatar.innerHTML = `<img src="${user.avatar_url}" class="avatar-img" alt="avatar">`;
+      } else {
+        avatar.textContent = (user.name || user.email || 'U')[0].toUpperCase();
+      }
+
+      document.getElementById('profileToken').textContent = authData.access_token || '';
+    }
+
+    async function testProtectedEndpoint() {
+      if (!currentAuth?.access_token) return;
+      try {
+        const res = await fetch('/v1/auth/me', {
+          headers: {
+            'Authorization': 'Bearer ' + currentAuth.access_token
+          }
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('GET /v1/auth/me SUCCESS!\n\n' + JSON.stringify(data, null, 2));
+        } else {
+          showToast('Verification error: ' + (data.error?.message || res.statusText));
+        }
+      } catch(e) {
+        showToast('API request failed: ' + e.message);
+      }
+    }
+
+    function copyToken() {
+      if (!currentAuth?.access_token) return;
+      navigator.clipboard.writeText(currentAuth.access_token);
+      showToast('JWT token copied to clipboard!', false);
+    }
+
+    async function logoutUser() {
+      if (currentAuth?.access_token) {
+        try {
+          await fetch('/v1/auth/logout', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + currentAuth.access_token }
+          });
+        } catch(e) {}
+      }
+      localStorage.removeItem('coremind_auth');
+      currentAuth = null;
+      document.getElementById('authProfile').style.display = 'none';
+      document.getElementById('authForms').style.display = 'block';
+      showToast('Logged out successfully.', false);
+    }
+  </script>
+</body>
+</html>

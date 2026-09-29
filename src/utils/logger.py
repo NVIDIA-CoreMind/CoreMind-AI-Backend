@@ -99,6 +99,9 @@ class Logger:
     def warn(self, event: str, **data: Any) -> None:
         self._write("warn", event, data if data else None)
 
+    def warning(self, event: str, **data: Any) -> None:
+        self._write("warn", event, data if data else None)
+
     def error(self, event: str, **data: Any) -> None:
         self._write("error", event, data if data else None)
 

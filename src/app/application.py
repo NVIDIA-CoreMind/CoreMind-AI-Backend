@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from src.config import settings
 from src.utils.errors import CoreMindError
@@ -73,6 +73,8 @@ def create_app() -> FastAPI:
             "status": "running",
             "docs": "/docs",
             "health": "/health",
+            "auth": "/auth",
+            "auth_api": "/v1/auth",
         }
 
     @app.get("/favicon.ico", include_in_schema=False)
@@ -83,15 +85,24 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "coremind-backend", "version": "1.0.0"}
 
+    # ── Interactive Antigravity Auth Portal ─────────────────────────
+    @app.api_route("/auth", methods=["GET", "HEAD"], include_in_schema=False)
+    async def auth_portal() -> HTMLResponse:
+        from src.auth.portal import get_auth_portal_html
+
+        return HTMLResponse(content=get_auth_portal_html(), status_code=200)
+
     # ── Register route modules ──────────────────────────────────────
     from src.api.routes.agent import router as agent_router
     from src.api.routes.ai import router as ai_router
+    from src.api.routes.auth import router as auth_router
     from src.api.routes.project import router as project_router
     from src.api.routes.sandbox import router as sandbox_router
     from src.api.routes.settings import router as settings_router
     from src.api.routes.tools import router as tools_router
     from src.api.websocket import router as ws_router
 
+    app.include_router(auth_router)
     app.include_router(agent_router)
     app.include_router(ai_router)
     app.include_router(project_router)
