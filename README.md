@@ -148,6 +148,8 @@ Run specific subsystem test suites:
 
 ## API Reference
 
+> 📖 **Frontend Team Documentation**: For full integration instructions, WebSocket event tables, authentication flows, and ready-to-use TypeScript/React SDK snippets, see the dedicated [Frontend Integration Guide](FRONTEND_API_GUIDE.md).
+
 ### Agent APIs
 - `POST /v1/agent/run` — Start autonomous coding task
 - `POST /v1/agent/cancel` / `POST /v1/agent/stop` — Stop/cancel running agent
