@@ -390,6 +390,35 @@
   <script>
     let currentAuth = null;
 
+    // Detect and resolve API endpoint across file://, localhost, 127.0.0.1, and external ports
+    function getApiEndpoints(path) {
+      const endpoints = [];
+      // 1. If loaded from an HTTP/HTTPS origin on port 43110, relative path works
+      if ((window.location.protocol === 'http:' || window.location.protocol === 'https:') &&
+          (window.location.port === '43110' || !window.location.port)) {
+        endpoints.push(path);
+      }
+      // 2. Direct IPv4 loopback (avoids IPv6 connection refused issues on macOS)
+      endpoints.push(`http://127.0.0.1:43110${path}`);
+      // 3. Named localhost
+      endpoints.push(`http://localhost:43110${path}`);
+      return endpoints;
+    }
+
+    async function safeFetch(path, options = {}) {
+      const endpoints = getApiEndpoints(path);
+      let lastErr = null;
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url, options);
+          return res;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      throw new Error(`Cannot connect to backend at 127.0.0.1:43110. Please ensure the backend is running (python3 main.py).`);
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
       const saved = localStorage.getItem('coremind_auth');
       if (saved) {
@@ -406,41 +435,24 @@
       toast.className = 'toast ' + (isError ? 'error' : 'success');
       setTimeout(() => {
         toast.className = 'toast';
-      }, 5000);
+      }, 6000);
     }
 
     async function handleGoogleAuth() {
       try {
-        const res = await fetch('/v1/auth/google/url');
+        const res = await safeFetch('/v1/auth/google/url');
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `HTTP ${res.status}`);
+        }
         const data = await res.json();
 
-        if (data.client_id && data.client_id !== 'coremind-google-client-id') {
+        if (data.auth_url) {
           // Trigger Google OAuth authorization redirect
           window.location.href = data.auth_url;
           return;
         }
-
-        // Mock prompt for development environment
-        const email = prompt("Enter your Google Account email for Continue with Google:", "developer@gmail.com");
-        if (!email) return;
-
-        const mockRes = await fetch('/v1/auth/google', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id_token: null,
-            code: null
-          })
-        });
-
-        const authData = await mockRes.json();
-        if (mockRes.ok) {
-          localStorage.setItem('coremind_auth', JSON.stringify(authData));
-          showAuthenticated(authData);
-          showToast('Signed in via Google successfully!', false);
-        } else {
-          showToast(authData.error?.message || 'Google authentication error');
-        }
+        throw new Error("No authorization URL returned from backend.");
       } catch (e) {
         showToast("Google Auth: " + e.message);
       }
@@ -470,7 +482,7 @@
     async function testProtectedEndpoint() {
       if (!currentAuth?.access_token) return;
       try {
-        const res = await fetch('/v1/auth/me', {
+        const res = await safeFetch('/v1/auth/me', {
           headers: {
             'Authorization': 'Bearer ' + currentAuth.access_token
           }
@@ -495,7 +507,7 @@
     async function logoutUser() {
       if (currentAuth?.access_token) {
         try {
-          await fetch('/v1/auth/logout', {
+          await safeFetch('/v1/auth/logout', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + currentAuth.access_token }
           });

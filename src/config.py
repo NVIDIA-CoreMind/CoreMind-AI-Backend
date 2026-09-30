@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     )
 
     # ── Backend Server ──────────────────────────────────────────────
-    coremind_backend_host: str = Field(default="127.0.0.1")
+    coremind_backend_host: str = Field(default="0.0.0.0")
     coremind_backend_port: int = Field(default=43110)
 
     # ── Agent Limits ────────────────────────────────────────────────
