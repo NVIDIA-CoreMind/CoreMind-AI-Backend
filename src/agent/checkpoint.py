@@ -8,10 +8,8 @@ pre-existing user changes from AI changes, and safely rolling back upon task fai
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from src.utils.ids import short_id
 from src.utils.logger import logger
@@ -116,11 +114,11 @@ class CheckpointManager:
                     full_path.parent.mkdir(parents=True, exist_ok=True)
                     full_path.write_text(orig, encoding="utf-8")
 
-        # If in Git repo, reset git index for these files
+        # If in Git repo, reset git index for these files without wiping restored files
         if checkpoint.is_git_repo and checkpoint.ai_modified_files:
             for f in checkpoint.ai_modified_files:
                 if f not in checkpoint.initial_untracked_files:
-                    await self._run_git(checkpoint.project_path, ["checkout", "HEAD", "--", f])
+                    await self._run_git(checkpoint.project_path, ["reset", "HEAD", "--", f])
 
         logger.info("checkpoint.rollback.completed", id=checkpoint.checkpoint_id)
         return True

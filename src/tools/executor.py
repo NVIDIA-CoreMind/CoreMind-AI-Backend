@@ -30,6 +30,7 @@ class ToolExecutor:
         args: dict[str, Any],
         project_path: str,
         agent_id: str | None = None,
+        is_approved: bool = False,
     ) -> dict[str, Any]:
         """
         Execute a tool by name with the given arguments.
@@ -42,8 +43,9 @@ class ToolExecutor:
         """
         tool = self._registry.get(tool_name)
 
-        # Permission check
-        check_permission(tool.permission, tool_name)
+        # Permission check (bypass if explicitly approved by user)
+        if not is_approved:
+            check_permission(tool.permission, tool_name)
 
         # Path validation for file tools
         if "path" in args:
@@ -60,7 +62,7 @@ class ToolExecutor:
 
         try:
             result = await asyncio.wait_for(
-                tool.executor(project_path=project_path, **args),
+                tool.executor(project_path=project_path, agent_id=agent_id or "", **args),
                 timeout=tool.timeout_ms / 1000,
             )
 
@@ -73,12 +75,12 @@ class ToolExecutor:
 
             return {"tool": tool_name, "success": True, "result": result}
 
-        except TimeoutError:
+        except TimeoutError as err:
             logger.error("tools.execute.timeout", tool=tool_name, timeout_ms=tool.timeout_ms)
             raise ToolError(
                 ErrorCode.TOOL_TIMEOUT,
                 f"Tool '{tool_name}' timed out after {tool.timeout_ms}ms",
-            )
+            ) from err
         except ToolError:
             raise
         except Exception as exc:
@@ -86,13 +88,14 @@ class ToolExecutor:
             raise ToolError(
                 ErrorCode.TOOL_EXECUTION_FAILED,
                 f"Tool '{tool_name}' failed: {exc}",
-            )
+            ) from exc
 
     async def execute_tool_call(
         self,
         tool_call: dict[str, Any],
         project_path: str,
         agent_id: str | None = None,
+        is_approved: bool = False,
     ) -> dict[str, Any]:
         """
         Execute an OpenAI-format tool call (from Nemotron's response).
@@ -105,15 +108,16 @@ class ToolExecutor:
 
         try:
             args = json.loads(args_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as err:
             raise ToolError(
                 ErrorCode.TOOL_INVALID_ARGS,
                 f"Invalid JSON arguments for tool '{name}': {args_str}",
-            )
+            ) from err
 
         return await self.execute(
             tool_name=name,
             args=args,
             project_path=project_path,
             agent_id=agent_id,
+            is_approved=is_approved,
         )

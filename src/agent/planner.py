@@ -70,11 +70,12 @@ async def analyze_task(task: str, project_context: str) -> AIResponse:
     return response
 
 
-def _parse_task_graph_from_text(raw_text: str, default_goal: str) -> TaskGraph:
+def _parse_task_graph_from_text(raw_text: str | None, default_goal: str) -> TaskGraph:
     """Extract a TaskGraph from AI response text, parsing JSON or falling back to default steps."""
+    text = (raw_text or "").strip()
     # Look for JSON code blocks or bracketed JSON
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
-    candidate_json = json_match.group(1) if json_match else raw_text.strip()
+    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidate_json = json_match.group(1) if json_match else text
 
     # If starts with { and ends with }
     brace_start = candidate_json.find("{")

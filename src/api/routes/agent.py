@@ -51,13 +51,13 @@ class QuestionAnswerRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    agent_id: str
     approval_id: str
+    agent_id: str | None = None
 
 
 class DenyRequest(BaseModel):
-    agent_id: str
     approval_id: str
+    agent_id: str | None = None
     reason: str = "User denied"
 
 

@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from src.changes.diff import FileDiff
-from src.changes.patch import rollback_patch
 from src.utils.ids import short_id
 from src.utils.logger import logger
 

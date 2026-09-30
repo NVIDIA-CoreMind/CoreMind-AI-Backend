@@ -213,3 +213,31 @@ class TestSyntaxValidator:
         ok2, err2 = validate_syntax("config.json", '{"key": value}')
         assert not ok2
         assert "JSONDecodeError" in err2
+
+    def test_javascript_with_regex_delimiters(self) -> None:
+        ok, _ = validate_syntax("app.js", "const regex = /\\{/g;\nconst r2 = /\\}/i;\nfunction test() { return 1; }\n")
+        assert ok
+
+    @pytest.mark.asyncio
+    async def test_tool_parameter_aliases(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        from src.tools.definitions.write_file import execute_write_file
+
+        project = str(tmp_path)
+        # write_file with file_path alias
+        w_res = await execute_write_file(project_path=project, file_path="hello.txt", content="hello world")
+        assert w_res["path"] == "hello.txt"
+        assert (tmp_path / "hello.txt").read_text() == "hello world"
+
+        # read_file with file_path alias
+        r_res = await execute_read_file(project_path=project, file_path="hello.txt")
+        assert r_res["content"] == "hello world"
+
+        # edit_file with target_content and replacement_content
+        e_res = await execute_edit_file(
+            project_path=project,
+            file_path="hello.txt",
+            target_content="hello world",
+            replacement_content="hello universe",
+        )
+        assert e_res["action"] == "edited"
+        assert (tmp_path / "hello.txt").read_text() == "hello universe"

@@ -111,7 +111,7 @@ class ContextManager:
         messages.extend(self._conversation)
 
         # Compaction if token threshold reached
-        estimated_tokens = sum(len(m.get("content", "")) for m in messages) // CHARS_PER_TOKEN
+        estimated_tokens = sum(len(m.get("content") or "") for m in messages) // CHARS_PER_TOKEN
         if estimated_tokens > MAX_CONTEXT_TOKENS:
             logger.warn(
                 "context.compacting",
@@ -128,11 +128,11 @@ class ContextManager:
 
     def add_assistant_message(
         self,
-        content: str,
+        content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
     ) -> None:
         """Add an assistant message to the conversation."""
-        msg: dict[str, Any] = {"role": "assistant", "content": content}
+        msg: dict[str, Any] = {"role": "assistant", "content": content or ""}
         if tool_calls:
             msg["tool_calls"] = tool_calls
         self._conversation.append(msg)

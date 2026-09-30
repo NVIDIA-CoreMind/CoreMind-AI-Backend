@@ -23,16 +23,28 @@ class NemotronModel:
 # Known models on Nebius Token Factory (subject to change)
 KNOWN_MODELS: list[NemotronModel] = [
     NemotronModel(
-        id="nvidia/llama-3.3-nemotron-super-49b-v1",
-        name="Nemotron Super 49B",
+        id="nvidia/Nemotron-3-Ultra-550b-a55b",
+        name="Nemotron 3 Ultra 550B",
         context_window=131072,
-        description="NVIDIA Nemotron Super 49B — strong reasoning and coding",
+        description="NVIDIA Nemotron 3 Ultra 550B — highest capability reasoning and agent model",
     ),
     NemotronModel(
-        id="nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        name="Nemotron Ultra 253B",
+        id="nvidia/nemotron-3-super-120b-a12b",
+        name="Nemotron 3 Super 120B",
         context_window=131072,
-        description="NVIDIA Nemotron Ultra 253B — highest capability model",
+        description="NVIDIA Nemotron 3 Super 120B — deep reasoning model",
+    ),
+    NemotronModel(
+        id="nvidia/Nemotron-3_5-Lightning",
+        name="Nemotron 3.5 Lightning",
+        context_window=131072,
+        description="NVIDIA Nemotron 3.5 Lightning — high-speed reasoning model",
+    ),
+    NemotronModel(
+        id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+        name="Nemotron 3 Nano 30B",
+        context_window=131072,
+        description="NVIDIA Nemotron 3 Nano 30B — efficient compact model",
     ),
 ]
 

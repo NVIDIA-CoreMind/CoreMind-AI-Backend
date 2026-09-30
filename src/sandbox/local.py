@@ -64,6 +64,7 @@ class LocalSandboxProvider(SandboxProvider):
             command=command[:200],
         )
 
+        process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
@@ -100,10 +101,11 @@ class LocalSandboxProvider(SandboxProvider):
 
         except TimeoutError:
             logger.error("sandbox.local.timeout", sandbox_id=sandbox_id, command=command[:100])
-            try:
-                process.kill()  # type: ignore[possibly-undefined]
-            except Exception:
-                pass
+            if process is not None:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
             raise SandboxError(
                 ErrorCode.SANDBOX_TIMEOUT,
                 f"Command timed out after {timeout}s: {command[:100]}",

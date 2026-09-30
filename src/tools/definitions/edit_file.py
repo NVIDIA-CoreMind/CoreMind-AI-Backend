@@ -106,27 +106,37 @@ def _apply_line_range_edit(original: str, start_line: int, end_line: int, new_co
 
 async def execute_edit_file(
     project_path: str,
-    path: str,
+    path: str = "",
     old_content: str | None = None,
     new_content: str | None = None,
     chunks: list[dict[str, str]] | None = None,
     start_line: int | None = None,
     end_line: int | None = None,
+    file_path: str | None = None,
+    target_content: str | None = None,
+    replacement_content: str | None = None,
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Apply safe multi-strategy edit to a file."""
-    file_path = Path(project_path) / path
+    target_rel_path = path or file_path
+    if not target_rel_path:
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
 
-    if not file_path.exists():
-        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {path}")
+    old_content = old_content if old_content is not None else target_content
+    new_content = new_content if new_content is not None else replacement_content
 
-    if not file_path.is_file():
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {path}")
+    file_obj = Path(project_path) / target_rel_path
+
+    if not file_obj.exists():
+        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {target_rel_path}")
+
+    if not file_obj.is_file():
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {target_rel_path}")
 
     try:
-        original = file_path.read_text(encoding="utf-8")
+        original = file_obj.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot edit binary file: {path}")
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot edit binary file: {target_rel_path}")
 
     updated = original
     strategy_used = "none"
@@ -181,30 +191,30 @@ async def execute_edit_file(
         )
 
     # Post-edit syntax validation before writing
-    valid, syntax_err = validate_syntax(file_path, updated)
+    valid, syntax_err = validate_syntax(file_obj, updated)
     if not valid:
         raise ToolError(
             ErrorCode.TOOL_INVALID_ARGS,
-            f"Edit would cause syntax error in {path}:\n{syntax_err}\n"
+            f"Edit would cause syntax error in {target_rel_path}:\n{syntax_err}\n"
             "File was NOT modified. Please check your replacement content.",
         )
 
     # Generate unified diff
-    file_diff = create_file_diff(original, updated, path)
+    file_diff = create_file_diff(original, updated, target_rel_path)
 
     # Write file
-    file_path.write_text(updated, encoding="utf-8")
+    file_obj.write_text(updated, encoding="utf-8")
 
     logger.info(
         "tools.edit_file",
-        path=path,
+        path=target_rel_path,
         strategy=strategy_used,
         additions=file_diff.additions,
         deletions=file_diff.deletions,
     )
 
     return {
-        "path": path,
+        "path": target_rel_path,
         "action": "edited",
         "strategy": strategy_used,
         "diff": file_diff.diff,

@@ -11,30 +11,36 @@ from pathlib import Path
 from typing import Any
 
 from src.tools.registry import PermissionLevel, ToolDefinition
+from src.utils.errors import ErrorCode, ToolError
 from src.utils.logger import logger
 
 
 async def execute_write_file(
     project_path: str,
-    path: str,
-    content: str,
+    path: str = "",
+    content: str = "",
+    file_path: str | None = None,
     create_directories: bool = True,
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Write content to a file, creating parent directories if needed."""
-    file_path = Path(project_path) / path
-    existed = file_path.exists()
+    target_rel_path = path or file_path
+    if not target_rel_path:
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
+
+    file_obj = Path(project_path) / target_rel_path
+    existed = file_obj.exists()
 
     if create_directories:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    file_path.write_text(content, encoding="utf-8")
+    file_obj.write_text(content, encoding="utf-8")
 
     action = "modified" if existed else "created"
-    logger.info("tools.write_file", path=path, action=action, size=len(content))
+    logger.info("tools.write_file", path=target_rel_path, action=action, size=len(content))
 
     return {
-        "path": path,
+        "path": target_rel_path,
         "action": action,
         "size": len(content),
         "lines": content.count("\n") + 1,

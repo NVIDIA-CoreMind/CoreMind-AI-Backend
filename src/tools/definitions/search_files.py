@@ -15,23 +15,25 @@ from src.tools.registry import PermissionLevel, ToolDefinition
 
 async def execute_search_files(
     project_path: str,
-    pattern: str,
+    pattern: str = "",
+    query: str | None = None,
     file_pattern: str | None = None,
     is_regex: bool = False,
     max_results: int = 30,
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Search for code or concepts across project files."""
+    search_query = pattern or query or ""
     searcher = HybridCodeSearcher(project_path)
     matches = searcher.search(
-        query=pattern,
+        query=search_query,
         file_pattern=file_pattern,
         is_regex=is_regex,
         max_results=max_results,
     )
 
     return {
-        "pattern": pattern,
+        "pattern": search_query,
         "matches": [m.to_dict() for m in matches],
         "total_matches": len(matches),
         "truncated": len(matches) >= max_results,

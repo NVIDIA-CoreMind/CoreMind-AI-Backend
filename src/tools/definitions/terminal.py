@@ -28,6 +28,7 @@ async def execute_terminal(
 
     logger.info("tools.terminal.execute", command=command[:200], cwd=project_path)
 
+    process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_shell(
             command,
@@ -57,10 +58,11 @@ async def execute_terminal(
 
     except TimeoutError:
         logger.error("tools.terminal.timeout", command=command[:100], timeout_ms=timeout * 1000)
-        try:
-            process.kill()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
+        if process is not None:
+            try:
+                process.kill()
+            except Exception:
+                pass
         return {
             "command": command,
             "exit_code": -1,

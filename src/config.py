@@ -31,7 +31,7 @@ class Settings(BaseSettings):
         description="Nebius Token Factory base URL",
     )
     nebius_model: str = Field(
-        default="nvidia/llama-3.3-nemotron-super-49b-v1",
+        default="nvidia/Nemotron-3-Ultra-550b-a55b",
         description="Default NVIDIA Nemotron model ID",
     )
 

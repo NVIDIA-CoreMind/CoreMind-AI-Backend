@@ -8,7 +8,6 @@ with log buffering, status reporting, and safe lifecycle controls.
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any

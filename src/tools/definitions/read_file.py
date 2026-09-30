@@ -32,7 +32,8 @@ def _is_binary_file(file_path: Path) -> bool:
 
 async def execute_read_file(
     project_path: str,
-    path: str,
+    path: str = "",
+    file_path: str | None = None,
     start_line: int | None = None,
     end_line: int | None = None,
     max_lines: int | None = DEFAULT_MAX_LINES,
@@ -42,15 +43,19 @@ async def execute_read_file(
     Read file contents, supporting line numbering, range selection,
     and safeguards against large/binary files.
     """
-    file_path = Path(project_path) / path
+    target_rel_path = path or file_path
+    if not target_rel_path:
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
 
-    if not file_path.exists():
-        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {path}")
+    file_obj = Path(project_path) / target_rel_path
 
-    if not file_path.is_file():
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {path}")
+    if not file_obj.exists():
+        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {target_rel_path}")
 
-    stat = file_path.stat()
+    if not file_obj.is_file():
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {target_rel_path}")
+
+    stat = file_obj.stat()
     if stat.st_size > MAX_FILE_SIZE:
         raise ToolError(
             ErrorCode.TOOL_INVALID_ARGS,
@@ -58,13 +63,13 @@ async def execute_read_file(
             "Please read a targeted line range using start_line and end_line.",
         )
 
-    if _is_binary_file(file_path):
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary file: {path}")
+    if _is_binary_file(file_obj):
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary file: {target_rel_path}")
 
     try:
-        raw_text = file_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary or non-UTF8 file: {path}")
+        raw_text = file_obj.read_text(encoding="utf-8")
+    except UnicodeDecodeError as err:
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary or non-UTF8 file: {target_rel_path}") from err
 
     all_lines = raw_text.splitlines()
     total_lines = len(all_lines)
@@ -72,7 +77,7 @@ async def execute_read_file(
     # Empty file
     if total_lines == 0:
         return {
-            "path": path,
+            "path": target_rel_path,
             "content": "",
             "numbered_content": "",
             "start_line": 1,
@@ -120,7 +125,7 @@ async def execute_read_file(
     numbered_content = "\n".join(numbered_lines)
 
     return {
-        "path": path,
+        "path": target_rel_path,
         "content": raw_content,
         "numbered_content": numbered_content,
         "start_line": s_line,

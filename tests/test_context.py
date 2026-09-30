@@ -36,6 +36,16 @@ class TestCompaction:
         result = compact_messages([], max_tokens=1000)
         assert result == []
 
+    def test_compaction_handles_none_content(self) -> None:
+        from typing import Any
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": "System"},
+            {"role": "user", "content": "Task"},
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "call_1"}]},
+        ]
+        result = compact_messages(messages, max_tokens=1000)
+        assert len(result) == 3
+
 
 class TestContextManager:
     """Test context manager functionality."""
@@ -45,6 +55,12 @@ class TestContextManager:
         cm.add_user_message("Hello")
         cm.add_assistant_message("Hi there")
         assert cm.message_count == 2
+
+    def test_build_messages_with_none_assistant_content(self) -> None:
+        cm = ContextManager("/fake/project")
+        cm.add_assistant_message(None, tool_calls=[{"id": "c1"}])
+        messages = cm.build_messages("test task")
+        assert len(messages) >= 2
 
     def test_record_file_changed(self) -> None:
         cm = ContextManager("/fake/project")

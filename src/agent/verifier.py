@@ -115,7 +115,7 @@ def _check_balanced_delimiters(code: str) -> tuple[bool, str]:
             i += 1
             continue
 
-        # Check start of comment / string
+        # Check start of comment / string / regex
         if c == "/" and nxt == "/":
             in_line_comment = True
             i += 2
@@ -124,6 +124,31 @@ def _check_balanced_delimiters(code: str) -> tuple[bool, str]:
             in_block_comment = True
             i += 2
             continue
+        if c == "/" and nxt not in ("/", "*"):
+            j = i - 1
+            while j >= 0 and chars[j] in (" ", "\t", "\r"):
+                j -= 1
+            prev_char = chars[j] if j >= 0 else "\n"
+            if prev_char in ("=", "(", "[", "{", ",", ":", ";", "!", "&", "|", "?", "~", "^", "\n"):
+                i += 1
+                in_char_class = False
+                while i < len(chars):
+                    rc = chars[i]
+                    if rc == "\n":
+                        line_num += 1
+                        break
+                    if rc == "\\" and i + 1 < len(chars):
+                        i += 2
+                        continue
+                    if rc == "[" and not in_char_class:
+                        in_char_class = True
+                    elif rc == "]" and in_char_class:
+                        in_char_class = False
+                    elif rc == "/" and not in_char_class:
+                        i += 1
+                        break
+                    i += 1
+                continue
         if c in ("'", '"', "`"):
             in_string = c
             i += 1

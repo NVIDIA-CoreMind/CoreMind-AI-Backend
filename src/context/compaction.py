@@ -31,7 +31,7 @@ def compact_messages(
     if not messages:
         return messages
 
-    estimated_tokens = sum(len(m.get("content", "")) for m in messages) // CHARS_PER_TOKEN
+    estimated_tokens = sum(len(m.get("content") or "") for m in messages) // CHARS_PER_TOKEN
     if estimated_tokens <= max_tokens:
         return messages
 
@@ -58,7 +58,7 @@ def compact_messages(
     compacted_middle: list[dict[str, Any]] = []
     for msg in middle:
         if msg.get("role") == "tool":
-            content = msg.get("content", "")
+            content = msg.get("content") or ""
             if len(content) > 500:
                 msg = {**msg, "content": content[:500] + "\n... [truncated]"}
         compacted_middle.append(msg)
@@ -67,11 +67,11 @@ def compact_messages(
     result = system_msgs + keep_first + compacted_middle + keep_last
 
     # If still too large, drop middle messages
-    result_tokens = sum(len(m.get("content", "")) for m in result) // CHARS_PER_TOKEN
+    result_tokens = sum(len(m.get("content") or "") for m in result) // CHARS_PER_TOKEN
     while result_tokens > max_tokens and compacted_middle:
         compacted_middle.pop(0)
         result = system_msgs + keep_first + compacted_middle + keep_last
-        result_tokens = sum(len(m.get("content", "")) for m in result) // CHARS_PER_TOKEN
+        result_tokens = sum(len(m.get("content") or "") for m in result) // CHARS_PER_TOKEN
 
     logger.info(
         "context.compaction.done",

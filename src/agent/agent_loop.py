@@ -155,7 +155,7 @@ class AgentLoop:
                     for result in results:
                         self._context.add_tool_result(
                             tool_call_id=result["tool_call_id"],
-                            tool_name="tool",
+                            tool_name=result.get("tool_name", "tool"),
                             result=result["content"],
                         )
 
@@ -169,7 +169,7 @@ class AgentLoop:
                         if name in ("write_file", "edit_file", "patch_file"):
                             try:
                                 args = json.loads(func.get("arguments", "{}"))
-                                path = args.get("path", "")
+                                path = args.get("path") or args.get("file_path") or ""
                                 if path and path not in self._task.files_changed:
                                     self._task.files_changed.append(path)
                                     self._context.record_file_changed(path)
@@ -193,16 +193,15 @@ class AgentLoop:
                     continue
 
                 # If AI responded with text only (no tool calls), it indicates completion
-                if response.finish_reason == "stop":
-                    if current_subtask_id:
-                        self._task.task_graph.complete_task(
-                            current_subtask_id, result="Finished without additional tool calls"
-                        )
-                        await self._emit(
-                            EventType.TASK_COMPLETED,
-                            {"task_id": current_subtask_id, "status": "completed"},
-                        )
-                    break
+                if current_subtask_id:
+                    self._task.task_graph.complete_task(
+                        current_subtask_id, result="Finished without additional tool calls"
+                    )
+                    await self._emit(
+                        EventType.TASK_COMPLETED,
+                        {"task_id": current_subtask_id, "status": "completed"},
+                    )
+                break
 
                 messages = self._context.build_messages()
 
@@ -350,7 +349,7 @@ class AgentLoop:
                 for r in results:
                     self._context.add_tool_result(
                         tool_call_id=r["tool_call_id"],
-                        tool_name="fix",
+                        tool_name=r.get("tool_name", "fix"),
                         result=r["content"],
                     )
 

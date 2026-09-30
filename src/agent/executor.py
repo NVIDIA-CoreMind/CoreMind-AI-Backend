@@ -8,7 +8,6 @@ approvals, checkpoints, change reviews, diff emission, and automatic post-edit v
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from src.agent.checkpoint import Checkpoint, checkpoint_manager
@@ -94,6 +93,7 @@ class AgentExecutor:
 
                 # Check if tool requires approval
                 tool_def = tool_registry.get(tool_name)
+                is_approved = False
                 if requires_approval(tool_def.permission):
                     approval = await approval_manager.request_approval(
                         agent_id=self._agent_id,
@@ -109,14 +109,17 @@ class AgentExecutor:
                         results.append({
                             "tool_call_id": tool_call_id,
                             "content": denied_msg,
+                            "tool_name": tool_name,
                         })
                         continue
+                    is_approved = True
 
                 # Execute the tool
                 result = await self._tool_executor.execute_tool_call(
                     tool_call=tc,
                     project_path=self._project_path,
                     agent_id=self._agent_id,
+                    is_approved=is_approved,
                 )
 
                 inner = result.get("result", {})
@@ -198,6 +201,7 @@ class AgentExecutor:
                 results.append({
                     "tool_call_id": tool_call_id,
                     "content": json.dumps(inner),
+                    "tool_name": tool_name,
                 })
 
             except Exception as exc:
@@ -216,6 +220,7 @@ class AgentExecutor:
                 results.append({
                     "tool_call_id": tool_call_id,
                     "content": json.dumps({"error": str(exc)}),
+                    "tool_name": tool_name,
                 })
 
         return results

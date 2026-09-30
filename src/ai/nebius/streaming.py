@@ -67,8 +67,18 @@ async def stream_response(
         if finish_reason:
             logger.debug("ai.stream.finished", finish_reason=finish_reason)
 
+        chunk_usage: dict[str, int] = {}
+        if hasattr(chunk, "usage") and chunk.usage:
+            chunk_usage = {
+                "prompt_tokens": chunk.usage.prompt_tokens,
+                "completion_tokens": chunk.usage.completion_tokens,
+                "total_tokens": chunk.usage.total_tokens,
+            }
+            usage_tracker.add(chunk_usage)
+
         yield AIStreamChunk(
             content=content,
             tool_calls_delta=tool_calls_delta,
             finish_reason=finish_reason,
+            usage=chunk_usage,
         )

@@ -35,7 +35,7 @@ def validate_path(file_path: str, project_path: str) -> None:
         target = (project_root / file_path).resolve()
 
         # Check directory traversal
-        if not str(target).startswith(str(project_root)):
+        if not target.is_relative_to(project_root):
             logger.error(
                 "security.path.traversal_blocked",
                 path=file_path,

@@ -89,7 +89,7 @@ class AIProvider(abc.ABC):
         ...
 
     @abc.abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,

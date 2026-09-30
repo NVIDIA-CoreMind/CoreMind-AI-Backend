@@ -76,6 +76,7 @@ class TerminalSession:
 
         logger.info("terminal.session.exec", session_id=self.session_id, command=command[:150], cwd=self.cwd)
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 shell_bin,
@@ -116,13 +117,15 @@ class TerminalSession:
                                 import re
                                 m_wsl = re.match(r"^/mnt/([a-zA-Z])/(.*)", new_pwd)
                                 if m_wsl:
-                                    candidate = f"{m_wsl.group(1).upper()}:\\{m_wsl.group(2).replace('/', '\\')}"
+                                    subpath = m_wsl.group(2).replace('/', '\\')
+                                    candidate = f"{m_wsl.group(1).upper()}:\\{subpath}"
                                     if os.path.isdir(candidate):
                                         new_pwd = candidate
                                 else:
                                     m_msys = re.match(r"^/([a-zA-Z])/(.*)", new_pwd)
                                     if m_msys:
-                                        candidate = f"{m_msys.group(1).upper()}:\\{m_msys.group(2).replace('/', '\\')}"
+                                        subpath = m_msys.group(2).replace('/', '\\')
+                                        candidate = f"{m_msys.group(1).upper()}:\\{subpath}"
                                         if os.path.isdir(candidate):
                                             new_pwd = candidate
                             if os.path.isdir(new_pwd):
@@ -141,10 +144,11 @@ class TerminalSession:
             return res
 
         except TimeoutError:
-            try:
-                proc.kill()  # type: ignore[possibly-undefined]
-            except Exception:
-                pass
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
             return {
                 "session_id": self.session_id,
                 "command": command,

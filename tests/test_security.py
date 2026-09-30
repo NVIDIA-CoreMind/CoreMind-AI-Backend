@@ -26,6 +26,15 @@ class TestPathPolicy:
         with pytest.raises(ToolError):
             validate_path("../../etc/passwd", project)
 
+    def test_sibling_directory_prefix_blocked(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        proj_dir = tmp_path / "project"
+        proj_dir.mkdir()
+        secret_dir = tmp_path / "project-secret"
+        secret_dir.mkdir()
+        (secret_dir / "secret.txt").write_text("classified")
+        with pytest.raises(ToolError):
+            validate_path("../project-secret/secret.txt", str(proj_dir))
+
     def test_absolute_path_outside_project(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
         project = str(tmp_path)
         with pytest.raises(ToolError):

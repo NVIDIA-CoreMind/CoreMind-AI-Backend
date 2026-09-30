@@ -8,9 +8,7 @@ stack traces, and diagnostics so large logs do not swamp LLM context.
 from __future__ import annotations
 
 import re
-from typing import Any
 
-from src.context.compaction import compact_messages
 
 # In-memory storage for full raw outputs
 _raw_output_store: dict[str, str] = {}
