@@ -90,43 +90,147 @@ CoreMind Backend powers autonomous software engineering within the CoreMind IDE 
 
 ---
 
-## Quick Start
+## Developer Onboarding & Local Setup
+
+Follow these step-by-step instructions to clone, configure, test, and run the backend locally.
 
 ### 1. Prerequisites
-- Python 3.11+
-- Nebius Token Factory API key
 
-### 2. Setup
+Before starting, ensure you have the following installed on your machine:
+- **Git**: `git --version`
+- **Python 3.11+**: Check with `python3 --version` (or `python --version` on Windows)
+- **Pip**: Latest version (`python3 -m pip install --upgrade pip`)
+- **Nebius Token Factory API Key**: Sign up at [Nebius AI Studio](https://studio.nebius.ai/) to obtain an API key for NVIDIA Nemotron inference.
+
+---
+
+### 2. Clone the Repository
+
+Clone the project from GitHub and navigate to the directory:
 
 ```bash
 git clone https://github.com/NVIDIA-CoreMind/CoreMind-AI-Backend.git
 cd CoreMind-AI-Backend
+```
 
+---
+
+### 3. Create & Activate Virtual Environment
+
+It is strongly recommended to isolate dependencies inside a virtual environment (`.venv`):
+
+**On macOS & Linux:**
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
 
+**On Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+**On Windows (Command Prompt):**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+> **Tip**: Once activated, your terminal prompt will be prefixed with `(.venv)`.
+
+---
+
+### 4. Install Dependencies
+
+Install all core and development dependencies:
+
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e ".[dev]"
 ```
 
-### 3. Configure `.env`
+---
+
+### 5. Configure Environment Variables
+
+Create your local `.env` file by copying the provided example:
+
+**On macOS / Linux:**
+```bash
+cp .env.example .env
+```
+
+**On Windows:**
+```cmd
+copy .env.example .env
+```
+
+Open `.env` in your editor and configure the necessary variables:
 
 ```env
+# ─── Nebius / NVIDIA Nemotron ───────────────────────────────────────
 NEBIUS_API_KEY=your-nebius-token-factory-key
 NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/
 NEBIUS_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+
+# ─── CoreMind Backend Server ────────────────────────────────────────
+COREMIND_BACKEND_HOST=127.0.0.1
 COREMIND_BACKEND_PORT=43110
+
+# ─── Agent Settings ────────────────────────────────────────────────
+MAX_AGENT_STEPS=20
+DEFAULT_COMMAND_TIMEOUT_MS=120000
+
+# ─── Authentication & JWT (Optional for local dev) ─────────────────
+JWT_SECRET_KEY=coremind-super-secret-jwt-key-2026-production-ready
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:43110/v1/auth/google/callback
 ```
 
-### 4. Run the Backend
+> 🔒 **Security Notice**: Never commit `.env` to git. It is already included in `.gitignore`.
 
+---
+
+### 6. Verify Installation with Tests
+
+Run the full automated test suite to ensure your environment is configured correctly:
+
+```bash
+pytest -v
+```
+
+You should see all **89 tests passing**.
+
+---
+
+### 7. Run the Backend
+
+Choose one of the following methods to start the server:
+
+#### Option A: Quick Run
 ```bash
 python3 main.py
 ```
-Or via uvicorn:
+
+#### Option B: Live Auto-Reload (Recommended for Development)
+Reloads the server automatically whenever you modify source files:
 ```bash
-uvicorn src.app.application:create_app --factory --host 127.0.0.1 --port 43110 --reload
+uvicorn src.app.bootstrap:app --host 127.0.0.1 --port 43110 --reload
 ```
+
+---
+
+### 8. Verify Server Readiness
+
+Once the server is running, check the following endpoints in your browser:
+- **Readiness / Health Check**: [http://127.0.0.1:43110/health](http://127.0.0.1:43110/health) → `{"status":"ok"}`
+- **Interactive OpenAPI Docs**: [http://127.0.0.1:43110/docs](http://127.0.0.1:43110/docs)
+- **ReDoc API Explorer**: [http://127.0.0.1:43110/redoc](http://127.0.0.1:43110/redoc)
+- **Authentication Test Portal**: [http://127.0.0.1:43110/auth](http://127.0.0.1:43110/auth)
+- **WebSocket Streaming URL**: `ws://127.0.0.1:43110/ws`
 
 ---
 

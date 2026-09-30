@@ -1,3 +1,10 @@
-num = 10
-if type(num) == int:
-    print("yes")
+"""
+CoreMind Backend — Entrypoint.
+
+Starts the FastAPI server with uvicorn.
+"""
+
+from src.app.bootstrap import main
+
+if __name__ == "__main__":
+    main()
