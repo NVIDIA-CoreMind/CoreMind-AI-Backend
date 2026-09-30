@@ -1,7 +1,8 @@
 """
 CoreMind Backend — Tool: read_file
 
-Reads the contents of a file from the project.
+Reads the contents of a file from the project with line numbers,
+windowing, and guardrails for binary and large files.
 Permission: READ
 """
 
@@ -13,7 +14,20 @@ from typing import Any
 from src.tools.registry import PermissionLevel, ToolDefinition
 from src.utils.errors import ErrorCode, ToolError
 
-MAX_FILE_SIZE = 1_000_000  # 1 MB
+MAX_FILE_SIZE = 2_000_000  # 2 MB
+DEFAULT_MAX_LINES = 500
+
+
+def _is_binary_file(file_path: Path) -> bool:
+    """Check if file appears to be binary by inspecting first 8KB."""
+    try:
+        with file_path.open("rb") as f:
+            chunk = f.read(8192)
+            if b"\x00" in chunk:
+                return True
+            return False
+    except OSError:
+        return False
 
 
 async def execute_read_file(
@@ -21,9 +35,13 @@ async def execute_read_file(
     path: str,
     start_line: int | None = None,
     end_line: int | None = None,
+    max_lines: int | None = DEFAULT_MAX_LINES,
     **_kwargs: Any,
 ) -> dict[str, Any]:
-    """Read file contents, optionally a specific line range."""
+    """
+    Read file contents, supporting line numbering, range selection,
+    and safeguards against large/binary files.
+    """
     file_path = Path(project_path) / path
 
     if not file_path.exists():
@@ -32,37 +50,93 @@ async def execute_read_file(
     if not file_path.is_file():
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {path}")
 
-    if file_path.stat().st_size > MAX_FILE_SIZE:
+    stat = file_path.stat()
+    if stat.st_size > MAX_FILE_SIZE:
         raise ToolError(
             ErrorCode.TOOL_INVALID_ARGS,
-            f"File too large ({file_path.stat().st_size} bytes). Max: {MAX_FILE_SIZE}",
+            f"File too large ({stat.st_size} bytes). Max limit is {MAX_FILE_SIZE} bytes. "
+            "Please read a targeted line range using start_line and end_line.",
         )
 
-    try:
-        content = file_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+    if _is_binary_file(file_path):
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary file: {path}")
 
-    lines = content.splitlines()
-    total_lines = len(lines)
+    try:
+        raw_text = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Cannot read binary or non-UTF8 file: {path}")
 
-    if start_line is not None or end_line is not None:
-        start = (start_line or 1) - 1  # Convert to 0-indexed
-        end = end_line or total_lines
-        lines = lines[start:end]
-        content = "\n".join(lines)
+    all_lines = raw_text.splitlines()
+    total_lines = len(all_lines)
+
+    # Empty file
+    if total_lines == 0:
+        return {
+            "path": path,
+            "content": "",
+            "numbered_content": "",
+            "start_line": 1,
+            "end_line": 0,
+            "total_lines": 0,
+            "lines_shown": 0,
+            "truncated": False,
+        }
+
+    # Range normalization and validation
+    s_line = start_line if start_line is not None else 1
+    if s_line < 1:
+        s_line = 1
+    if s_line > total_lines:
+        raise ToolError(
+            ErrorCode.TOOL_INVALID_ARGS,
+            f"start_line ({s_line}) exceeds total lines in file ({total_lines}).",
+        )
+
+    e_line = end_line if end_line is not None else total_lines
+    if e_line < s_line:
+        raise ToolError(
+            ErrorCode.TOOL_INVALID_ARGS,
+            f"end_line ({e_line}) cannot be less than start_line ({s_line}).",
+        )
+
+    # Apply max_lines cap if needed
+    line_limit = max_lines if (max_lines is not None and max_lines > 0) else DEFAULT_MAX_LINES
+    truncated = False
+    if (e_line - s_line + 1) > line_limit:
+        e_line = s_line + line_limit - 1
+        truncated = True
+
+    e_line = min(e_line, total_lines)
+
+    selected_lines = all_lines[s_line - 1 : e_line]
+    raw_content = "\n".join(selected_lines)
+
+    # Compute formatted line numbers with consistent width padding
+    width = len(str(e_line))
+    numbered_lines = [
+        f"{idx:>{width}} | {line}"
+        for idx, line in enumerate(selected_lines, start=s_line)
+    ]
+    numbered_content = "\n".join(numbered_lines)
 
     return {
         "path": path,
-        "content": content,
+        "content": raw_content,
+        "numbered_content": numbered_content,
+        "start_line": s_line,
+        "end_line": e_line,
         "total_lines": total_lines,
-        "lines_shown": len(lines),
+        "lines_shown": len(selected_lines),
+        "truncated": truncated,
     }
 
 
 read_file_tool = ToolDefinition(
     name="read_file",
-    description="Read the contents of a file from the project. Supports optional line range.",
+    description=(
+        "Read file contents with line-numbered output. Supports line range selection "
+        "(start_line, end_line) and max_lines to inspect relevant code sections efficiently."
+    ),
     parameters={
         "type": "object",
         "properties": {
@@ -72,11 +146,15 @@ read_file_tool = ToolDefinition(
             },
             "start_line": {
                 "type": "integer",
-                "description": "Optional start line (1-indexed)",
+                "description": "Optional start line (1-indexed, inclusive)",
             },
             "end_line": {
                 "type": "integer",
                 "description": "Optional end line (1-indexed, inclusive)",
+            },
+            "max_lines": {
+                "type": "integer",
+                "description": "Optional maximum number of lines to return (default: 500)",
             },
         },
         "required": ["path"],

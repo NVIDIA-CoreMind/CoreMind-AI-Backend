@@ -2,7 +2,8 @@
 CoreMind Backend — Agent Loop.
 
 The main execution loop that orchestrates:
-    Task → Analyze → Plan → Execute → Observe → Verify → Fix → Complete
+    Understand → Inspect Context → Create Plan → Execute Task →
+    Observe Result → Verify → Fix → Re-verify → Complete
 
 This is the brain of CoreMind.
 """
@@ -10,24 +11,32 @@ This is the brain of CoreMind.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
+from src.agent.checkpoint import Checkpoint, checkpoint_manager
 from src.agent.executor import AgentExecutor
+from src.agent.planner import generate_task_graph
 from src.agent.state_machine import AgentState, StateMachine
 from src.agent.task import AgentTask, TaskStatus
+from src.agent.task_graph import TaskNodeStatus
 from src.agent.verifier import VerificationResult, run_verification
 from src.ai.prompts.coding import build_error_analysis
 from src.ai.provider import get_ai_provider
+from src.changes.review import ChangeSet, change_review_manager
 from src.config import settings
 from src.context.context_manager import ContextManager
 from src.events.event_bus import event_bus
 from src.events.events import CoreMindEvent, EventType
+from src.tools.definitions.tasks import clear_active_task_graph, set_active_task_graph
 from src.tools.registry import tool_registry
 from src.utils.logger import logger
 
+MAX_REPAIR_ATTEMPTS = 3
+
 
 class AgentLoop:
-    """The main agent execution loop."""
+    """The main agent execution engine."""
 
     def __init__(self, task: AgentTask) -> None:
         self._task = task
@@ -37,35 +46,83 @@ class AgentLoop:
         self._provider = get_ai_provider()
         self._tools = tool_registry.to_openai_tools()
         self._stopped = False
+        self._checkpoint: Checkpoint | None = None
+        self._change_set: ChangeSet | None = None
+
+    @property
+    def state(self) -> AgentState:
+        return self._state.state
 
     async def run(self) -> AgentTask:
         """
         Execute the full agent loop.
-
         Returns the completed task with all results.
         """
+        set_active_task_graph(self._task.agent_id, self._task.task_graph)
         try:
             await self._emit(EventType.AGENT_STARTED, {"task": self._task.task[:200]})
             self._task.status = TaskStatus.RUNNING
 
-            # Step 1: Analyze
+            # Step 1: Understand & Analyze Context
             self._state.transition(AgentState.ANALYZING)
             await self._emit(EventType.AGENT_THINKING, {"phase": "analyzing"})
 
-            # Step 2: Plan + Execute loop
+            # Step 2: Create Structured Plan
             self._state.transition(AgentState.PLANNING)
             await self._emit(EventType.AGENT_PLANNING, {"phase": "planning"})
 
-            # Build initial context with user task
-            messages = self._context.build_messages(user_task=self._task.task)
+            # Generate structured task graph
+            try:
+                task_graph = await generate_task_graph(
+                    task=self._task.task,
+                    project_context=f"Project root: {self._task.project_path}",
+                )
+                self._task.task_graph = task_graph
+                set_active_task_graph(self._task.agent_id, self._task.task_graph)
+                await self._emit(
+                    EventType.PLAN_CREATED,
+                    {"goal": task_graph.goal, "tasks": task_graph.to_dict()["tasks"]},
+                )
+            except Exception as plan_err:
+                logger.warn("agent.loop.plan_generation_warn", error=str(plan_err))
 
-            # Step 3: Main loop — ask Nemotron, execute tools, repeat
+            # Build initial context with user task and task summary
+            user_prompt = self._task.task
+            if self._task.task_graph and self._task.task_graph._tasks:
+                user_prompt += f"\n\nPlanned Task Roadmap:\n{self._task.task_graph.summary()}"
+
+            messages = self._context.build_messages(user_task=user_prompt)
+
+            # Step 3: Main loop — Execute → Observe → Act
+            # Create Git Checkpoint & Change Set before AI modifications begin
+            self._checkpoint = await checkpoint_manager.create_checkpoint(self._task.project_path)
+            self._change_set = change_review_manager.create_change_set(
+                self._task.agent_id, self._task.project_path
+            )
+            self._executor.set_checkpoint(self._checkpoint)
+            self._executor.set_change_set_id(self._change_set.change_id)
+
             self._state.transition(AgentState.EXECUTING)
             step = 0
+
 
             while step < settings.max_agent_steps and not self._stopped:
                 step += 1
                 self._task.steps_completed = step
+
+                # Mark next runnable subtask in progress if available
+                runnable_tasks = self._task.task_graph.get_runnable_tasks()
+                current_subtask_id = ""
+                if runnable_tasks:
+                    current_task_node = runnable_tasks[0]
+                    current_subtask_id = current_task_node.id
+                    self._task.task_graph.update_task(
+                        current_task_node.id, status=TaskNodeStatus.IN_PROGRESS
+                    )
+                    await self._emit(
+                        EventType.TASK_STARTED,
+                        {"task_id": current_task_node.id, "title": current_task_node.title},
+                    )
 
                 logger.info(
                     "agent.loop.step",
@@ -74,7 +131,7 @@ class AgentLoop:
                     max_steps=settings.max_agent_steps,
                 )
 
-                # Ask Nemotron for next action
+                # Ask AI Provider for next action
                 response = await self._provider.chat(
                     messages=messages,
                     tools=self._tools,
@@ -87,7 +144,7 @@ class AgentLoop:
                     tool_calls=response.tool_calls if response.tool_calls else None,
                 )
 
-                # If Nemotron wants to call tools
+                # If AI wants to call tools
                 if response.tool_calls:
                     self._state.transition(AgentState.OBSERVING)
 
@@ -109,7 +166,7 @@ class AgentLoop:
                     for tc in response.tool_calls:
                         func = tc.get("function", {})
                         name = func.get("name", "")
-                        if name in ("write_file", "edit_file"):
+                        if name in ("write_file", "edit_file", "patch_file"):
                             try:
                                 args = json.loads(func.get("arguments", "{}"))
                                 path = args.get("path", "")
@@ -119,40 +176,76 @@ class AgentLoop:
                             except json.JSONDecodeError:
                                 pass
 
+                    # If current subtask was in progress, complete it if relevant changes were made
+                    if current_subtask_id and self._task.files_changed:
+                        self._task.task_graph.complete_task(
+                            current_subtask_id, result="Action executed successfully"
+                        )
+                        await self._emit(
+                            EventType.TASK_COMPLETED,
+                            {"task_id": current_subtask_id, "status": "completed"},
+                        )
+
                     # Continue the loop
                     if self._state.can_transition(AgentState.EXECUTING):
                         self._state.transition(AgentState.EXECUTING)
                     messages = self._context.build_messages()
                     continue
 
-                # If Nemotron responded with text only (no tool calls), it's done
+                # If AI responded with text only (no tool calls), it indicates completion
                 if response.finish_reason == "stop":
+                    if current_subtask_id:
+                        self._task.task_graph.complete_task(
+                            current_subtask_id, result="Finished without additional tool calls"
+                        )
+                        await self._emit(
+                            EventType.TASK_COMPLETED,
+                            {"task_id": current_subtask_id, "status": "completed"},
+                        )
                     break
 
                 messages = self._context.build_messages()
 
-            # Step 4: Verification
+            # Mark remaining tasks completed if not failed
+            for t in self._task.task_graph._tasks.values():
+                if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS):
+                    t.status = TaskNodeStatus.COMPLETED
+                    t.completed_at = datetime.now(UTC)
+
+            # Step 4: Verification Loop
             if self._task.files_changed and not self._stopped:
-                verification = await self._run_verification_loop()
+                verification = await self._run_verification_loop(max_retries=MAX_REPAIR_ATTEMPTS)
 
                 if not verification.success:
                     self._state.transition(AgentState.FAILED)
                     self._task.status = TaskStatus.FAILED
                     self._task.error = f"Verification failed: {verification.error_summary[:500]}"
+                    if self._checkpoint:
+                        await checkpoint_manager.rollback(self._checkpoint)
+                    await self._emit(EventType.AGENT_FAILED, {"error": self._task.error})
                     await self._emit(EventType.AGENT_ERROR, {"error": self._task.error})
                     return self._task
 
-            # Complete
+            # Complete or Cancelled
             if not self._stopped:
-                self._state.transition(AgentState.VERIFYING)
+                if self._state.can_transition(AgentState.VERIFYING):
+                    self._state.transition(AgentState.VERIFYING)
                 self._state.transition(AgentState.COMPLETED)
                 self._task.status = TaskStatus.COMPLETED
+                self._task.completed_at = datetime.now(UTC)
                 await self._emit(EventType.AGENT_COMPLETED, {
                     "files_changed": self._task.files_changed,
                     "steps": self._task.steps_completed,
+                    "task_graph": self._task.task_graph.to_dict(),
+                    "change_id": self._change_set.change_id if self._change_set else None,
                 })
             else:
+                if self._state.can_transition(AgentState.CANCELLED):
+                    self._state.transition(AgentState.CANCELLED)
+                elif self._state.can_transition(AgentState.STOPPED):
+                    self._state.transition(AgentState.STOPPED)
                 self._task.status = TaskStatus.CANCELLED
+                self._task.completed_at = datetime.now(UTC)
                 await self._emit(EventType.AGENT_STOPPED, {})
 
             return self._task
@@ -161,26 +254,43 @@ class AgentLoop:
             logger.error("agent.loop.error", agent_id=self._task.agent_id, error=str(exc))
             self._task.status = TaskStatus.FAILED
             self._task.error = str(exc)
+            self._task.completed_at = datetime.now(UTC)
+            if self._checkpoint:
+                try:
+                    await checkpoint_manager.rollback(self._checkpoint)
+                except Exception:
+                    pass
+            await self._emit(EventType.AGENT_FAILED, {"error": str(exc)})
             await self._emit(EventType.AGENT_ERROR, {"error": str(exc)})
             return self._task
 
-    async def _run_verification_loop(self, max_retries: int = 3) -> VerificationResult:
+        finally:
+            clear_active_task_graph(self._task.agent_id)
+
+    async def _run_verification_loop(self, max_retries: int = MAX_REPAIR_ATTEMPTS) -> VerificationResult:
         """
         Run verification and attempt fixes if it fails.
-
-        This is the error recovery loop:
-        VERIFYING → ANALYZING_ERROR → FIXING → VERIFYING
+        Error recovery loop: VERIFYING → ANALYZING_ERROR → FIXING → VERIFYING
         """
+        last_result = VerificationResult(
+            success=False,
+            command="",
+            exit_code=-1,
+            stdout="",
+            stderr="No verification executed",
+        )
+
         for attempt in range(max_retries):
             if self._state.can_transition(AgentState.VERIFYING):
                 self._state.transition(AgentState.VERIFYING)
 
-            await self._emit(EventType.TEST_STARTED, {"attempt": attempt + 1})
+            await self._emit(EventType.VERIFICATION_STARTED, {"attempt": attempt + 1})
 
             result = await run_verification(
                 project_path=self._task.project_path,
                 agent_id=self._task.agent_id,
             )
+            last_result = result
 
             self._task.execution_results.append({
                 "attempt": attempt + 1,
@@ -190,10 +300,10 @@ class AgentLoop:
             })
 
             if result.success:
-                await self._emit(EventType.TEST_PASSED, {"attempt": attempt + 1})
+                await self._emit(EventType.VERIFICATION_PASSED, {"attempt": attempt + 1})
                 return result
 
-            await self._emit(EventType.TEST_FAILED, {
+            await self._emit(EventType.VERIFICATION_FAILED, {
                 "attempt": attempt + 1,
                 "error_summary": result.error_summary[:500],
             })
@@ -202,7 +312,7 @@ class AgentLoop:
             if attempt >= max_retries - 1:
                 return result
 
-            # Error recovery: ask Nemotron to fix
+            # Error recovery: ask AI provider to fix
             logger.info(
                 "agent.loop.fixing",
                 agent_id=self._task.agent_id,
@@ -222,7 +332,6 @@ class AgentLoop:
             if self._state.can_transition(AgentState.FIXING):
                 self._state.transition(AgentState.FIXING)
 
-            # Ask Nemotron to fix the error
             messages = self._context.build_messages()
             fix_response = await self._provider.chat(
                 messages=messages,
@@ -245,7 +354,7 @@ class AgentLoop:
                         result=r["content"],
                     )
 
-        return result  # type: ignore[possibly-undefined]
+        return last_result
 
     def stop(self) -> None:
         """Signal the agent to stop."""

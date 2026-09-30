@@ -43,6 +43,30 @@ class Settings(BaseSettings):
     max_agent_steps: int = Field(default=20, ge=1, le=100)
     default_command_timeout_ms: int = Field(default=120_000, ge=1000)
 
+    # ── Limited Agent Memory ────────────────────────────────────────
+    memory_max_items: int = Field(
+        default=40,
+        ge=1,
+        le=200,
+        description="Max durable memories stored per project",
+    )
+    memory_max_content_chars: int = Field(
+        default=400,
+        ge=50,
+        le=2000,
+        description="Max characters stored in a single memory",
+    )
+    memory_prompt_items: int = Field(
+        default=8,
+        ge=1,
+        le=20,
+        description="Max memories injected into each model request",
+    )
+
+    # ── Web Search ──────────────────────────────────────────────────
+    web_search_max_results: int = Field(default=5, ge=1, le=10)
+    web_search_timeout_s: int = Field(default=12, ge=3, le=30)
+
     # ── Sandbox ─────────────────────────────────────────────────────
     sandbox_type: str = Field(default="local", pattern=r"^(local|nebius)$")
     sandbox_working_dir: str = Field(default="")

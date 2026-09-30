@@ -1,173 +1,182 @@
-# CoreMind Backend
+# CoreMind Backend — Agentic Coding Engine
 
-**AI/Agent orchestration backend for CoreMind IDE — powered by NVIDIA Nemotron via Nebius Token Factory.**
+**Production-oriented AI coding agent backend for the CoreMind IDE — powered by NVIDIA Nemotron via Nebius Token Factory.**
 
-CoreMind Backend is the local AI and agent orchestration service that connects the CoreMind IDE with NVIDIA Nemotron through Nebius Token Factory and with the CoreMind Sandbox for safe code execution.
+CoreMind Backend powers autonomous software engineering within the CoreMind IDE following the strict lifecycle:
+> **Understand → Inspect Context → Create Plan → Execute Task → Observe Result → Verify → Fix → Re-verify → Complete**
+
+---
 
 ## Architecture
 
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                       CoreMind IDE                          │
+│                Electron + React + TypeScript                │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ WebSocket Events & REST APIs
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    CoreMind Backend                         │
+│                                                             │
+│   Agent Execution Engine (TaskGraph + Retry/Fix Loop)       │
+│   Code Intelligence (RepoMap + Symbol Extractor + Hybrid)   │
+│   Safe File Engine (Windowed Read + Multi-Strategy Edit)    │
+│   Diff & Review (Unified Diff + Patch + Change Review)      │
+│   Stateful Terminal (Persistent Sessions + Background Procs)│
+│   Git Checkpoints (Pre-edit Snapshots + Isolated Rollback)  │
+│   Context Prioritizer (Rules + Symbols + Compactor)         │
+│   AI Provider (Nebius Token Factory → NVIDIA Nemotron)      │
+│   Security & Guardrails (Command Policies + Approvals)      │
+└──────────────┬──────────────────────────────┬───────────────┘
+               │                              │
+               ▼                              ▼
+    ┌──────────────────────┐      ┌───────────────────────┐
+    │ Nebius Token Factory │      │   Local Environment   │
+    │   NVIDIA Nemotron    │      │ (Tests, Linter, Git)  │
+    └──────────────────────┘      └───────────────────────┘
 ```
-┌─────────────────────────────────────────────────┐
-│               CoreMind IDE                      │
-│          Electron + React + TypeScript           │
-└────────────────────┬────────────────────────────┘
-                     │ WebSocket / HTTP
-                     ▼
-┌─────────────────────────────────────────────────┐
-│             CoreMind Backend                    │
-│                                                 │
-│   API Layer (FastAPI)                           │
-│   Agent Engine (Plan → Execute → Verify)        │
-│   Context Manager (Layered context assembly)    │
-│   Tool Registry (10+ registered tools)          │
-│   AI Provider (Nebius → Nemotron)               │
-│   Security (Permissions + Approvals)            │
-│   Project Manager (Auto-detection)              │
-│   Sandbox Provider (Local + future Nebius)      │
-└──────────┬──────────────────┬───────────────────┘
-           │                  │
-           ▼                  ▼
-┌──────────────────┐ ┌───────────────────────┐
-│ Nebius Token     │ │  CoreMind Sandbox     │
-│ Factory          │ │                       │
-│ NVIDIA Nemotron  │ │  Isolated execution   │
-└──────────────────┘ └───────────────────────┘
-```
+
+---
+
+## Key Agentic Features
+
+### 1. Robust Agent Execution Loop & Self-Healing
+- **Deterministic State Machine**: `IDLE` → `ANALYZING` → `PLANNING` → `EXECUTING` → `OBSERVING` → `VERIFYING` → `FIXING` → `WAITING_FOR_USER` → `COMPLETED` / `FAILED` / `CANCELLED`.
+- **Automatic Self-Healing**: Automatically catches compiler/test failures, analyzes error traces, applies targeted fixes, and re-verifies (capped at `MAX_REPAIR_ATTEMPTS = 3`).
+- **Graceful Cancellation & Limits**: Enforces step limits, timeouts, and responsive cancellation.
+
+### 2. Dynamic Task Graph & Todo System
+- Replaces static string planning with a directed, dependency-aware task graph (`TaskNodeStatus`: `PENDING`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`, `FAILED`, `SKIPPED`).
+- The AI autonomously creates tasks, satisfies dependencies, tracks in-flight work, and streams task updates to the IDE.
+
+### 3. Repository Code Intelligence & Compact Repo Map
+- **AST & Symbol Extraction**: Extracts classes, methods, functions, interfaces, signatures, and docstrings across Python, Dart/Flutter, TypeScript/JavaScript, etc.
+- **Context-Efficient Repo Maps**: Feeds compact structural summaries to the LLM without swamping the context window with full files.
+
+### 4. Hybrid Code Search
+- Multi-channel retrieval combining:
+  1. **Exact string & regex matching**
+  2. **Symbol lookup** (classes, methods, interfaces)
+  3. **Semantic/concept search** (term overlap, keyword ranking)
+- Ranked results with confidence scores and deduplication.
+
+### 5. Safe Multi-Strategy File Editing
+- Never relies on naive broad replacements.
+- **Strategy 1**: Exact search-and-replace with uniqueness checks.
+- **Strategy 2**: Multi-chunk atomic replacements in a single pass.
+- **Strategy 3**: Line-range surgical editing.
+- **Strategy 4**: Whitespace-tolerant fuzzy fallback.
+- **Pre-Write Syntax Validation**: Validates AST/delimiters before writing to disk; invalid syntax is rejected before touching the file.
+
+### 6. Unified Diff Engine & Change Review
+- Every code modification generates standard unified diffs with added/deleted line statistics.
+- **Change Review Model**: Backend tracks changes in `ChangeSet` objects, enabling frontend review with `preview_changes()`, `accept_changes()`, `reject_changes()`, `accept_file()`, and `reject_file()`.
+
+### 7. Git Checkpoints & Rollback
+- Automatic checkpoint snapshot before multi-file modifications begin.
+- Distinguishes prior user edits from AI modifications; if verification fails or is rejected, rolls back only the AI modifications.
+
+### 8. Project Rules Support
+- Automatically detects `.coremindrules`, `AGENTS.md`, and `.cursorrules` in the project root.
+- Injects coding standards and architectural rules directly into the agent's context.
+
+### 9. Persistent Terminal Sessions & Background Processes
+- **Persistent Sessions**: Retains working directory (`cd` navigation), environment variables (`source .venv/bin/activate`), and command history across turns.
+- **Background Processes**: Safely manages long-running services (`npm run dev`, `flutter run`) with buffered log access and stop controls.
+
+### 10. Ask-User Clarification
+- When facing architectural decisions with multiple valid choices, the agent calls `ask_question` and pauses in `WAITING_FOR_USER` state until answered via API or WebSocket.
+
+---
 
 ## Quick Start
 
 ### 1. Prerequisites
-
 - Python 3.11+
-- A Nebius Token Factory API key
+- Nebius Token Factory API key
 
-### 2. Clone & Install
+### 2. Setup
 
 ```bash
 git clone https://github.com/NVIDIA-CoreMind/CoreMind-AI-Backend.git
 cd CoreMind-AI-Backend
 
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Install dev dependencies
 pip install -e ".[dev]"
 ```
 
-### 3. Configure
+### 3. Configure `.env`
+
+```env
+NEBIUS_API_KEY=your-nebius-token-factory-key
+NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/
+NEBIUS_MODEL=nvidia/llama-3.3-nemotron-super-49b-v1
+COREMIND_BACKEND_PORT=43110
+```
+
+### 4. Run the Backend
 
 ```bash
-cp .env.example .env
-# Edit .env and set your NEBIUS_API_KEY
+python3 main.py
 ```
-
-### 4. Run
-
+Or via uvicorn:
 ```bash
-python -m src.app.bootstrap
+uvicorn src.app.application:create_app --factory --host 127.0.0.1 --port 43110 --reload
 ```
 
-The backend starts on `http://127.0.0.1:43110` by default.
-
-### 5. Verify
-
-```bash
-# Health check
-curl http://127.0.0.1:43110/health
-
-# Test AI connectivity
-curl -X POST http://127.0.0.1:43110/v1/ai/test
-```
-
-## NVIDIA & Nebius Integration
-
-CoreMind uses **NVIDIA Nemotron** models accessed through **Nebius Token Factory**, which exposes an OpenAI-compatible API.
-
-- **AI Provider Abstraction**: The agent engine communicates with an `AIProvider` interface, not directly with Nebius. This enables future provider swapping.
-- **OpenAI SDK**: We use the official `openai` Python SDK pointed at the Nebius base URL — no custom HTTP plumbing.
-- **Streaming**: Full support for streaming responses via WebSocket to the IDE.
-- **Model Flexibility**: The model ID is configurable via `NEBIUS_MODEL` in `.env`. Never hardcoded.
-
-```
-Agent → AIProvider → NebiusProvider → Nebius Token Factory → NVIDIA Nemotron
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Health check |
-| `POST` | `/v1/agent/run` | Start an agent task |
-| `POST` | `/v1/agent/stop` | Stop a running agent |
-| `GET` | `/v1/agent/status` | Get agent status |
-| `POST` | `/v1/agent/approve` | Approve a pending action |
-| `POST` | `/v1/agent/deny` | Deny a pending action |
-| `POST` | `/v1/ai/test` | Test AI connectivity |
-| `GET` | `/v1/ai/models` | List available models |
-| `GET` | `/v1/ai/usage` | Get token usage stats |
-| `POST` | `/v1/project/open` | Open a project |
-| `GET` | `/v1/project/tree` | Get project file tree |
-| `POST` | `/v1/tools/search` | Search files |
-| `POST` | `/v1/tools/read` | Read a file |
-| `POST` | `/v1/tools/write` | Write a file |
-| `POST` | `/v1/tools/edit` | Edit a file |
-| `POST` | `/v1/sandbox/create` | Create sandbox |
-| `POST` | `/v1/sandbox/execute` | Execute in sandbox |
-| `POST` | `/v1/sandbox/destroy` | Destroy sandbox |
-| `WS` | `/ws` | WebSocket for streaming events |
-
-## Agent Workflow
-
-The agent follows an autonomous loop:
-
-1. **Analyze** — Understand the user's task
-2. **Plan** — Create a step-by-step execution plan
-3. **Execute** — Call tools (read/write files, run commands)
-4. **Verify** — Run tests to validate changes
-5. **Fix** — If tests fail, analyze errors and apply fixes
-6. **Complete** — Report results to the IDE
-
-### Error Recovery Loop
-
-```
-VERIFYING → ANALYZING_ERROR → FIXING → VERIFYING → COMPLETED
-```
-
-The agent can retry failed verifications up to 3 times automatically.
-
-## Security
-
-- **API Key Protection**: `NEBIUS_API_KEY` is never exposed to the IDE renderer or logged
-- **Path Policy**: All file operations are restricted to the project directory
-- **Command Policy**: Dangerous commands (`rm -rf /`, `sudo`, etc.) are blocked
-- **Approval Flow**: HIGH_RISK operations require user approval via WebSocket
-- **Secret Redaction**: Logs automatically redact API keys, tokens, and passwords
-- **Step Limits**: Configurable max steps (default: 20) prevent runaway agents
+---
 
 ## Running Tests
 
+Run the comprehensive test suite (89 passed tests):
+
 ```bash
-pytest tests/ -v
+pytest -v
 ```
 
-## Environment Variables
+Run specific subsystem test suites:
+- `pytest tests/test_phase1.py` — TaskGraph, ReadFile, EditFile, Diff/Patch, Verifier
+- `pytest tests/test_phase2.py` — Symbols, RepoMap, Hybrid Search, Project Rules, Compactor
+- `pytest tests/test_phase3.py` — Ask User, Checkpoints, Persistent Terminal, Background Processes, Change Review
+- `pytest tests/test_integration.py` — End-to-end integration and API endpoints
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEBIUS_API_KEY` | — | Nebius Token Factory API key |
-| `NEBIUS_BASE_URL` | `https://api.studio.nebius.com/v1` | Nebius API base URL |
-| `NEBIUS_MODEL` | `nvidia/llama-3.3-nemotron-super-49b-v1` | Model ID |
-| `COREMIND_BACKEND_HOST` | `127.0.0.1` | Backend host |
-| `COREMIND_BACKEND_PORT` | `43110` | Backend port |
-| `MAX_AGENT_STEPS` | `20` | Max agent steps per task |
-| `DEFAULT_COMMAND_TIMEOUT_MS` | `120000` | Command timeout |
-| `SANDBOX_TYPE` | `local` | Sandbox provider (`local`) |
-| `LOG_LEVEL` | `info` | Log level |
+---
 
-## License
+## API Reference
 
-MIT — see [LICENSE](LICENSE)
+### Agent APIs
+- `POST /v1/agent/run` — Start autonomous coding task
+- `POST /v1/agent/cancel` / `POST /v1/agent/stop` — Stop/cancel running agent
+- `GET /v1/agent/{agent_id}` / `GET /v1/agent/status` — Get agent task status and progress
+- `POST /v1/agent/question` — Submit answer to pending question
+- `GET /v1/agent/questions` — List pending questions
+- `POST /v1/agent/approve` / `POST /v1/agent/deny` — Approve/deny privileged tools
+
+### Project APIs
+- `POST /v1/project/open` — Open directory and detect framework/language
+- `GET /v1/project/tree` — Get file hierarchy tree
+- `GET /v1/project/search` — Execute hybrid code search
+- `GET /v1/project/repo_map` — Get symbol map and architectural summary
+
+### Change Review APIs
+- `GET /v1/changes/{change_id}` — Preview diffs and modified files
+- `POST /v1/changes/{change_id}/accept` — Accept all changes
+- `POST /v1/changes/{change_id}/reject` — Reject and revert all changes
+- `POST /v1/changes/{change_id}/accept_file` — Accept individual file
+- `POST /v1/changes/{change_id}/reject_file` — Reject and revert individual file
+
+### Persistent Terminal & Process APIs
+- `POST /v1/terminal/session` — Create persistent terminal session
+- `POST /v1/terminal/session/{id}/execute` — Run command in session (preserves CWD/env)
+- `DELETE /v1/terminal/session/{id}` — Terminate terminal session
+- `POST /v1/terminal/process/start` — Start background process (e.g. dev server)
+- `GET /v1/terminal/process/{id}/status` — Get process status
+- `GET /v1/terminal/process/{id}/logs` — Tail process logs
+- `POST /v1/terminal/process/{id}/stop` — Stop background process
+
+### Streaming WebSocket
+- `ws://127.0.0.1:43110/ws` — Real-time event stream (`agent.started`, `plan.created`, `task.started`, `diff.created`, `verification.started`, `verification.passed`, `agent.waiting_for_user`, `agent.completed`).

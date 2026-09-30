@@ -12,10 +12,14 @@ from enum import StrEnum
 from typing import Any
 
 
+from src.agent.task_graph import TaskGraph
+
+
 class TaskStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
+    WAITING_FOR_USER = "waiting_for_user"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -41,6 +45,7 @@ class AgentTask:
     execution_results: list[dict[str, Any]] = field(default_factory=list)
     steps_completed: int = 0
     error: str | None = None
+    task_graph: TaskGraph = field(default_factory=TaskGraph)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,4 +61,6 @@ class AgentTask:
             "files_changed": self.files_changed,
             "tool_calls_count": len(self.tool_calls),
             "error": self.error,
+            "task_graph": self.task_graph.to_dict(),
         }
+

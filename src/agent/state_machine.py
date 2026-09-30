@@ -43,43 +43,74 @@ class AgentState(StrEnum):
 
     # Stop states
     STOPPED = "STOPPED"
+    CANCELLED = "CANCELLED"
+
+    # User input state
+    WAITING_FOR_USER = "WAITING_FOR_USER"
 
 
 # Valid state transitions
 TRANSITIONS: dict[AgentState, set[AgentState]] = {
-    AgentState.IDLE: {AgentState.ANALYZING},
-    AgentState.ANALYZING: {AgentState.PLANNING, AgentState.FAILED},
-    AgentState.PLANNING: {AgentState.EXECUTING, AgentState.FAILED},
-    AgentState.EXECUTING: {
-        AgentState.OBSERVING,
-        AgentState.APPROVAL_REQUIRED,
+    AgentState.IDLE: {AgentState.ANALYZING, AgentState.CANCELLED, AgentState.STOPPED},
+    AgentState.ANALYZING: {AgentState.PLANNING, AgentState.FAILED, AgentState.CANCELLED, AgentState.STOPPED},
+    AgentState.PLANNING: {
+        AgentState.EXECUTING,
+        AgentState.WAITING_FOR_USER,
         AgentState.FAILED,
+        AgentState.CANCELLED,
         AgentState.STOPPED,
     },
+    AgentState.EXECUTING: {
+        AgentState.OBSERVING,
+        AgentState.VERIFYING,
+        AgentState.COMPLETED,
+        AgentState.APPROVAL_REQUIRED,
+        AgentState.WAITING_FOR_USER,
+        AgentState.FAILED,
+        AgentState.STOPPED,
+        AgentState.CANCELLED,
+    },
+
     AgentState.OBSERVING: {
         AgentState.EXECUTING,
         AgentState.VERIFYING,
+        AgentState.WAITING_FOR_USER,
         AgentState.FAILED,
+        AgentState.STOPPED,
+        AgentState.CANCELLED,
     },
     AgentState.VERIFYING: {
         AgentState.COMPLETED,
         AgentState.ANALYZING_ERROR,
         AgentState.FAILED,
+        AgentState.STOPPED,
+        AgentState.CANCELLED,
     },
     AgentState.COMPLETED: set(),  # Terminal state
     AgentState.FAILED: set(),  # Terminal state
     AgentState.STOPPED: set(),  # Terminal state
+    AgentState.CANCELLED: set(),  # Terminal state
 
     # Approval flow
-    AgentState.APPROVAL_REQUIRED: {AgentState.WAITING_FOR_APPROVAL},
+    AgentState.APPROVAL_REQUIRED: {AgentState.WAITING_FOR_APPROVAL, AgentState.CANCELLED, AgentState.STOPPED},
     AgentState.WAITING_FOR_APPROVAL: {
         AgentState.EXECUTING,  # Approved
         AgentState.STOPPED,    # Denied
+        AgentState.CANCELLED,
+    },
+
+    # Waiting for user interaction flow
+    AgentState.WAITING_FOR_USER: {
+        AgentState.EXECUTING,
+        AgentState.PLANNING,
+        AgentState.STOPPED,
+        AgentState.CANCELLED,
+        AgentState.FAILED,
     },
 
     # Error recovery loop
-    AgentState.ANALYZING_ERROR: {AgentState.FIXING, AgentState.FAILED},
-    AgentState.FIXING: {AgentState.VERIFYING, AgentState.FAILED},
+    AgentState.ANALYZING_ERROR: {AgentState.FIXING, AgentState.FAILED, AgentState.CANCELLED, AgentState.STOPPED},
+    AgentState.FIXING: {AgentState.VERIFYING, AgentState.FAILED, AgentState.CANCELLED, AgentState.STOPPED},
 }
 
 
@@ -97,7 +128,13 @@ class StateMachine:
 
     @property
     def is_terminal(self) -> bool:
-        return self._state in {AgentState.COMPLETED, AgentState.FAILED, AgentState.STOPPED}
+        return self._state in {
+            AgentState.COMPLETED,
+            AgentState.FAILED,
+            AgentState.STOPPED,
+            AgentState.CANCELLED,
+        }
+
 
     def transition(self, new_state: AgentState) -> None:
         """Transition to a new state. Raises if the transition is invalid."""

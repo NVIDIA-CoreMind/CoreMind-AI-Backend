@@ -96,6 +96,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         message.get("approval_id", ""),
                         message.get("reason", "User denied"),
                     )
+                elif msg_type in ("agent.question_answer", "agent.question"):
+                    from src.tools.definitions.ask_question import question_manager
+
+                    question_manager.answer_question(
+                        message.get("question_id", ""),
+                        message.get("answer", ""),
+                    )
+
             except json.JSONDecodeError:
                 logger.warn("websocket.invalid_json")
     except WebSocketDisconnect:

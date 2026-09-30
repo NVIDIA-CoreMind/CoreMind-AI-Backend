@@ -92,20 +92,64 @@ class ToolRegistry:
         return len(self._tools)
 
 
+class DefaultToolRegistry(ToolRegistry):
+    """The default system singleton tool registry with lazy built-in loading."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._registered = False
+
+    def _ensure_registered(self) -> None:
+        if not self._registered:
+            self._registered = True
+            _register_all_tools(self)
+
+    def get(self, name: str) -> ToolDefinition:
+        self._ensure_registered()
+        return super().get(name)
+
+    def list_tools(self) -> list[ToolDefinition]:
+        self._ensure_registered()
+        return super().list_tools()
+
+    def to_openai_tools(self) -> list[dict[str, Any]]:
+        self._ensure_registered()
+        return super().to_openai_tools()
+
+    def get_by_permission(self, level: PermissionLevel) -> list[ToolDefinition]:
+        self._ensure_registered()
+        return super().get_by_permission(level)
+
+    @property
+    def count(self) -> int:
+        self._ensure_registered()
+        return super().count
+
+
 # ── Module-level singleton ──────────────────────────────────────────
 
-tool_registry = ToolRegistry()
+tool_registry = DefaultToolRegistry()
 
 
-def _register_all_tools() -> None:
+def _register_all_tools(target: ToolRegistry) -> None:
     """Register all built-in tool definitions."""
+    from src.tools.definitions.ask_question import ask_question_tool
     from src.tools.definitions.edit_file import edit_file_tool
+
     from src.tools.definitions.git import git_diff_tool, git_log_tool, git_status_tool
     from src.tools.definitions.list_directory import list_directory_tool
+    from src.tools.definitions.memory import (
+        memory_forget_tool,
+        memory_recall_tool,
+        memory_save_tool,
+    )
+    from src.tools.definitions.patch_file import patch_file_tool
     from src.tools.definitions.read_file import read_file_tool
     from src.tools.definitions.sandbox import sandbox_execute_tool
     from src.tools.definitions.search_files import search_files_tool
+    from src.tools.definitions.tasks import create_task_tool, update_task_tool
     from src.tools.definitions.terminal import terminal_tool
+    from src.tools.definitions.web_search import web_search_tool
     from src.tools.definitions.write_file import write_file_tool
 
     for tool in [
@@ -114,16 +158,21 @@ def _register_all_tools() -> None:
         list_directory_tool,
         write_file_tool,
         edit_file_tool,
+        patch_file_tool,
+        create_task_tool,
+        update_task_tool,
+        ask_question_tool,
         terminal_tool,
         git_status_tool,
         git_diff_tool,
         git_log_tool,
         sandbox_execute_tool,
+        web_search_tool,
+        memory_save_tool,
+        memory_recall_tool,
+        memory_forget_tool,
     ]:
-        tool_registry.register(tool)
+        target.register(tool)
 
-    logger.info("tools.registry.initialized", count=tool_registry.count)
+    logger.info("tools.registry.initialized", count=len(target._tools))
 
-
-# Auto-register on import
-_register_all_tools()

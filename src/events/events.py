@@ -20,32 +20,45 @@ class EventType(StrEnum):
     AGENT_STARTED = "agent.started"
     AGENT_PLANNING = "agent.planning"
     AGENT_THINKING = "agent.thinking"
+    AGENT_WAITING_FOR_USER = "agent.waiting_for_user"
     AGENT_COMPLETED = "agent.completed"
+    AGENT_FAILED = "agent.failed"
     AGENT_ERROR = "agent.error"
     AGENT_STOPPED = "agent.stopped"
 
+    # Plan and task progress
+    PLAN_CREATED = "plan.created"
+    TASK_STARTED = "task.started"
+    TASK_COMPLETED = "task.completed"
+
     # Tool events
-    TOOL_STARTED = "agent.tool.started"
-    TOOL_COMPLETED = "agent.tool.completed"
+    TOOL_STARTED = "tool.started"
+    TOOL_COMPLETED = "tool.completed"
 
     # Approval events
     APPROVAL_REQUIRED = "agent.approval.required"
     APPROVAL_GRANTED = "agent.approval.granted"
     APPROVAL_DENIED = "agent.approval.denied"
 
-    # File events
-    FILE_CHANGED = "agent.file.changed"
-    FILE_CREATED = "agent.file.created"
-    FILE_DELETED = "agent.file.deleted"
+    # File & Diff events
+    FILE_READ = "file.read"
+    FILE_CHANGED = "file.changed"
+    FILE_CREATED = "file.created"
+    FILE_DELETED = "file.deleted"
+    DIFF_CREATED = "diff.created"
 
     # Command/sandbox events
-    COMMAND_STARTED = "agent.command.started"
-    COMMAND_COMPLETED = "agent.command.completed"
+    COMMAND_STARTED = "command.started"
+    COMMAND_OUTPUT = "command.output"
+    COMMAND_COMPLETED = "command.completed"
 
-    # Test events
-    TEST_STARTED = "agent.test.started"
-    TEST_PASSED = "agent.test.passed"
-    TEST_FAILED = "agent.test.failed"
+    # Verification events
+    VERIFICATION_STARTED = "verification.started"
+    VERIFICATION_PASSED = "verification.passed"
+    VERIFICATION_FAILED = "verification.failed"
+    TEST_STARTED = "verification.started"
+    TEST_PASSED = "verification.passed"
+    TEST_FAILED = "verification.failed"
 
     # AI streaming
     AI_TOKEN = "agent.ai.token"

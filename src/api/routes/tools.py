@@ -2,6 +2,7 @@
 CoreMind Backend — Tools API Routes.
 
 POST /v1/tools/search — Search files in project
+POST /v1/tools/web-search — Search the public web
 POST /v1/tools/read   — Read a file
 POST /v1/tools/write  — Write a file
 POST /v1/tools/edit   — Edit a file
@@ -34,6 +35,18 @@ async def search_files(request: ToolRequest) -> dict[str, Any]:
     logger.info("api.tools.search", project=request.project_path)
     result = await tool_executor.execute(
         tool_name="search_files",
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.post("/web-search")
+async def web_search(request: ToolRequest) -> dict[str, Any]:
+    """Search the public web."""
+    logger.info("api.tools.web_search", project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name="web_search",
         args=request.args,
         project_path=request.project_path,
     )

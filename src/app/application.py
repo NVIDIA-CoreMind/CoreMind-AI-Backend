@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     # ── CORS — allow the Electron IDE renderer ──────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Tighten in production
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -96,12 +96,15 @@ def create_app() -> FastAPI:
     from src.api.routes.agent import router as agent_router
     from src.api.routes.ai import router as ai_router
     from src.api.routes.auth import router as auth_router
+    from src.api.routes.changes import router as changes_router
     from src.api.routes.project import router as project_router
     from src.api.routes.sandbox import router as sandbox_router
     from src.api.routes.settings import router as settings_router
+    from src.api.routes.terminal import router as terminal_router
     from src.api.routes.tools import router as tools_router
     from src.api.websocket import router as ws_router
 
+    # Mount v1 API routes
     app.include_router(auth_router)
     app.include_router(agent_router)
     app.include_router(ai_router)
@@ -109,6 +112,14 @@ def create_app() -> FastAPI:
     app.include_router(tools_router)
     app.include_router(sandbox_router)
     app.include_router(settings_router)
+    app.include_router(changes_router)
+    app.include_router(terminal_router)
     app.include_router(ws_router)
+
+    # Mount convenient aliases without /v1 prefix for desktop client flexibility
+    app.include_router(agent_router, prefix="", include_in_schema=False)
+    app.include_router(project_router, prefix="", include_in_schema=False)
+    app.include_router(changes_router, prefix="", include_in_schema=False)
+    app.include_router(terminal_router, prefix="", include_in_schema=False)
 
     return app

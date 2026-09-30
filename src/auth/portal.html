@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CoreMind AI — Continue with Google</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
   <style>
     :root {
       --bg: #090a0f;
@@ -49,11 +52,13 @@
       opacity: 0.4;
       animation: floatGlow 12s ease-in-out infinite alternate;
     }
+
     .glow-1 {
       top: -120px;
       left: 15%;
       background: radial-gradient(circle, #4f46e5, #06b6d4);
     }
+
     .glow-2 {
       bottom: -120px;
       right: 15%;
@@ -62,16 +67,21 @@
     }
 
     @keyframes floatGlow {
-      0% { transform: translateY(0px) scale(1); }
-      100% { transform: translateY(60px) scale(1.15); }
+      0% {
+        transform: translateY(0px) scale(1);
+      }
+
+      100% {
+        transform: translateY(60px) scale(1.15);
+      }
     }
 
     .bg-grid {
       position: absolute;
       inset: 0;
-      background-image: 
-        linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
       background-size: 40px 40px;
       mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
       z-index: 0;
@@ -89,6 +99,7 @@
       text-align: center;
       margin-bottom: 28px;
     }
+
     .brand-badge {
       display: inline-flex;
       align-items: center;
@@ -105,6 +116,7 @@
       margin-bottom: 14px;
       backdrop-filter: blur(8px);
     }
+
     .brand-badge .dot {
       width: 6px;
       height: 6px;
@@ -112,15 +124,17 @@
       background: var(--accent);
       box-shadow: 0 0 8px var(--accent);
     }
+
     .brand-title {
       font-size: 28px;
       font-weight: 800;
       letter-spacing: -0.03em;
       background: linear-gradient(135deg, #ffffff 40%, #9ca3af 100%);
-      -webkit-background-clip: text;
+      background-clip: text;
       -webkit-text-fill-color: transparent;
       margin-bottom: 6px;
     }
+
     .brand-subtitle {
       font-size: 14px;
       color: var(--text-muted);
@@ -154,14 +168,17 @@
       transition: all 0.2s ease;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
     }
+
     .btn-google:hover {
       background: #f9fafb;
       transform: translateY(-2px);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
     }
+
     .btn-google:active {
       transform: translateY(0);
     }
+
     .google-icon {
       width: 20px;
       height: 20px;
@@ -175,12 +192,14 @@
       display: none;
       animation: fadeIn 0.2s ease;
     }
+
     .toast.error {
       display: block;
       background: rgba(239, 68, 68, 0.15);
       border: 1px solid rgba(239, 68, 68, 0.3);
       color: #fca5a5;
     }
+
     .toast.success {
       display: block;
       background: rgba(16, 185, 129, 0.15);
@@ -191,6 +210,7 @@
     .auth-profile {
       display: none;
     }
+
     .avatar-wrapper {
       width: 80px;
       height: 80px;
@@ -206,21 +226,25 @@
       box-shadow: 0 0 28px rgba(0, 242, 254, 0.35);
       overflow: hidden;
     }
+
     .avatar-img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
+
     .user-name {
       font-size: 22px;
       font-weight: 700;
       margin-bottom: 4px;
     }
+
     .user-email {
       font-size: 14px;
       color: var(--text-muted);
       margin-bottom: 14px;
     }
+
     .badge-provider {
       display: inline-flex;
       align-items: center;
@@ -235,6 +259,7 @@
       color: #93c5fd;
       margin-bottom: 20px;
     }
+
     .token-box {
       background: rgba(0, 0, 0, 0.4);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -249,10 +274,12 @@
       max-height: 80px;
       overflow-y: auto;
     }
+
     .btn-action-group {
       display: flex;
       gap: 10px;
     }
+
     .btn-secondary {
       flex: 1;
       background: rgba(255, 255, 255, 0.08);
@@ -265,24 +292,35 @@
       cursor: pointer;
       transition: all 0.2s ease;
     }
+
     .btn-secondary:hover {
       background: rgba(255, 255, 255, 0.14);
     }
+
     .btn-logout {
       background: rgba(239, 68, 68, 0.12);
       color: #fca5a5;
       border: 1px solid rgba(239, 68, 68, 0.2);
     }
+
     .btn-logout:hover {
       background: rgba(239, 68, 68, 0.22);
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
   </style>
 </head>
+
 <body>
 
   <div class="ambient-glow glow-1"></div>
@@ -309,7 +347,8 @@
         <p id="profileEmail" class="user-email">user@gmail.com</p>
         <span id="profileProvider" class="badge-provider">Google Account</span>
 
-        <div style="font-size:12px; color:var(--text-muted); text-align:left; margin-bottom:6px;">JWT Bearer Token:</div>
+        <div style="font-size:12px; color:var(--text-muted); text-align:left; margin-bottom:6px;">JWT Bearer Token:
+        </div>
         <div id="profileToken" class="token-box">ey...</div>
 
         <div class="btn-action-group">
@@ -328,10 +367,14 @@
         <!-- CONTINUE WITH GOOGLE -->
         <button id="googleBtn" class="btn-google" onclick="handleGoogleAuth()">
           <svg class="google-icon" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
-            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
-            <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
-            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+            <path fill="#4285F4"
+              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z" />
+            <path fill="#34A853"
+              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z" />
+            <path fill="#FBBC05"
+              d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+            <path fill="#EA4335"
+              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
           </svg>
           Continue with Google
         </button>
@@ -353,7 +396,7 @@
         try {
           const authData = JSON.parse(saved);
           showAuthenticated(authData);
-        } catch(e) {}
+        } catch (e) { }
       }
     });
 
@@ -370,7 +413,7 @@
       try {
         const res = await fetch('/v1/auth/google/url');
         const data = await res.json();
-        
+
         if (data.client_id && data.client_id !== 'coremind-google-client-id') {
           // Trigger Google OAuth authorization redirect
           window.location.href = data.auth_url;
@@ -398,7 +441,7 @@
         } else {
           showToast(authData.error?.message || 'Google authentication error');
         }
-      } catch(e) {
+      } catch (e) {
         showToast("Google Auth: " + e.message);
       }
     }
@@ -438,7 +481,7 @@
         } else {
           showToast('Verification error: ' + (data.error?.message || res.statusText));
         }
-      } catch(e) {
+      } catch (e) {
         showToast('API request failed: ' + e.message);
       }
     }
@@ -456,7 +499,7 @@
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + currentAuth.access_token }
           });
-        } catch(e) {}
+        } catch (e) { }
       }
       localStorage.removeItem('coremind_auth');
       currentAuth = null;
@@ -466,4 +509,5 @@
     }
   </script>
 </body>
+
 </html>

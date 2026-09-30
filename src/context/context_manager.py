@@ -1,23 +1,26 @@
 """
 CoreMind Backend — Context Manager.
 
-Assembles layered context for Nemotron requests:
+Assembles prioritized, layered context for AI requests:
 
-    System Context
+    System Prompt (AI Coding Agent instructions)
           +
-    Project Context
+    Project Rules (.coremindrules, AGENTS.md, .cursorrules)
           +
-    Task Context
+    Project Context (language, framework, test command)
           +
-    Conversation Context
+    Repository Map (compact structure and symbols)
           +
-    Relevant File Context
+    Limited Durable Memory
           +
-    Tool Results
+    User Request & Task State
+          +
+    Conversation History (with compressed tool results)
           ↓
-    Nemotron
+    AI Provider
 
-Never sends the entire repository. Uses compaction when context grows too large.
+Never sends the entire repository. Uses compaction and output compression
+when context approaches token limits.
 """
 
 from __future__ import annotations
@@ -27,18 +30,20 @@ from typing import Any
 from src.ai.prompts.coding import build_coding_context
 from src.ai.prompts.system import get_system_prompt
 from src.config import settings
+from src.context.compactor import compress_tool_output, store_raw_output
 from src.context.compaction import compact_messages
+from src.context.rules import load_project_rules
+from src.memory.store import agent_memory
 from src.project.project_manager import project_manager
+from src.project.repo_map import RepoMap
 from src.utils.logger import logger
 
-# Approximate token limit for context (conservative estimate)
 MAX_CONTEXT_TOKENS = 100_000
-# Characters-to-tokens ratio (rough estimate)
 CHARS_PER_TOKEN = 4
 
 
 class ContextManager:
-    """Assembles and manages layered context for AI requests."""
+    """Assembles and manages prioritized layered context for AI requests."""
 
     def __init__(self, project_path: str) -> None:
         self._project_path = project_path
@@ -46,26 +51,26 @@ class ContextManager:
         self._tool_results: list[dict[str, Any]] = []
         self._files_read: dict[str, str] = {}
         self._files_changed: list[str] = []
+        self._repo_map = RepoMap(project_path)
 
     def build_messages(self, user_task: str | None = None) -> list[dict[str, Any]]:
         """
-        Build the full message list for a Nemotron request.
-
-        Layers:
-        1. System prompt
-        2. Project context (as a system message)
-        3. User task
-        4. Conversation history + tool results
+        Build the full prioritized message list for an AI request.
         """
         messages: list[dict[str, Any]] = []
 
-        # Layer 1: System prompt
+        # Layer 1: Core System Prompt
         messages.append({
             "role": "system",
             "content": get_system_prompt(max_steps=settings.max_agent_steps),
         })
 
-        # Layer 2: Project context
+        # Layer 2: Project Rules (.coremindrules, AGENTS.md, .cursorrules)
+        rules_text = load_project_rules(self._project_path)
+        if rules_text:
+            messages.append({"role": "system", "content": rules_text})
+
+        # Layer 3: Project Architecture & Environment Context
         project_info = project_manager.get_project(self._project_path)
         if project_info:
             ctx = build_coding_context(
@@ -79,14 +84,33 @@ class ContextManager:
             )
             messages.append({"role": "system", "content": ctx})
 
-        # Layer 3: User task (if first message)
+        # Layer 4: Compact Repository Map & Symbol Outline
+        try:
+            repo_summary = self._repo_map.build_compact_summary(max_chars=3500)
+            if repo_summary and len(repo_summary) > 50:
+                messages.append({"role": "system", "content": repo_summary})
+        except Exception as e:
+            logger.warn("context.repo_map.failed", error=str(e))
+
+        # Layer 5: Limited Project Memory
+        memory_query = user_task or ""
+        if not memory_query:
+            for msg in reversed(self._conversation):
+                if msg.get("role") == "user":
+                    memory_query = str(msg.get("content") or "")
+                    break
+        digest = agent_memory.build_prompt_digest(self._project_path, query=memory_query)
+        if digest:
+            messages.append({"role": "system", "content": digest})
+
+        # Layer 6: User Task / Instructions
         if user_task and not self._conversation:
             messages.append({"role": "user", "content": user_task})
 
-        # Layer 4: Conversation history
+        # Layer 7: Active Conversation & Tool Execution
         messages.extend(self._conversation)
 
-        # Compact if too large
+        # Compaction if token threshold reached
         estimated_tokens = sum(len(m.get("content", "")) for m in messages) // CHARS_PER_TOKEN
         if estimated_tokens > MAX_CONTEXT_TOKENS:
             logger.warn(
@@ -119,10 +143,16 @@ class ContextManager:
         tool_name: str,
         result: str,
     ) -> None:
-        """Add a tool result to the conversation."""
+        """Add a tool result to the conversation, applying output compression if verbose."""
+        # Store full raw result
+        store_raw_output(tool_call_id, result)
+
+        # Compress if too large
+        compressed = compress_tool_output(tool_name, result)
+
         self._conversation.append({
             "role": "tool",
-            "content": result,
+            "content": compressed,
             "tool_call_id": tool_call_id,
         })
         self._tool_results.append({
@@ -132,7 +162,7 @@ class ContextManager:
 
     def record_file_read(self, path: str, content: str) -> None:
         """Record a file that was read (for context tracking)."""
-        self._files_read[path] = content[:5000]  # Keep first 5K chars
+        self._files_read[path] = content[:5000]
 
     def record_file_changed(self, path: str) -> None:
         """Record a file that was modified."""
