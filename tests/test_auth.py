@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+from pathlib import Path
 import tempfile
 from unittest.mock import AsyncMock, patch
 
@@ -33,8 +34,9 @@ from src.utils.errors import AuthError, ErrorCode
 @pytest.fixture
 def temp_storage():
     """Create an isolated SQLite storage for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
-        storage = UserStorage(db_path=tmp.name)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_path = str(Path(tmp_dir) / "test_auth.db")
+        storage = UserStorage(db_path=db_path)
         yield storage
 
 

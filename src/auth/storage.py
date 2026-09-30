@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from src.auth.models import User
@@ -23,11 +25,16 @@ class UserStorage:
         self._lock = threading.Lock()
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Create a connection with row factory enabled."""
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Create a connection with row factory enabled, managing transaction and closing."""
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         """Ensure parent directories and tables exist."""

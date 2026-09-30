@@ -20,6 +20,22 @@ from src.utils.ids import short_id
 from src.utils.logger import logger
 
 
+def _get_shell() -> str:
+    if os.name == "nt":
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
+        if os.path.exists(git_bash):
+            return git_bash
+        git_bash_86 = r"C:\Program Files (x86)\Git\bin\bash.exe"
+        if os.path.exists(git_bash_86):
+            return git_bash_86
+        for cand in ["bash", "zsh"]:
+            found = shutil.which(cand)
+            if found and "WindowsApps" not in found:
+                return found
+        return shutil.which("powershell") or "cmd.exe"
+    return shutil.which("bash") or shutil.which("zsh") or "/bin/sh"
+
+
 @dataclass
 class TerminalSession:
     """A persistent terminal session maintaining working directory and environment."""
@@ -45,16 +61,17 @@ class TerminalSession:
         # We execute through a subshell that sources accumulated env, sets cwd,
         # executes command, and outputs the updated cwd and environment variables.
         delimiter = f"__CM_DELIM_{short_id()}__"
+        pwd_cmd = "pwd -W 2>/dev/null || pwd" if os.name == "nt" else "pwd"
         wrapper = (
             f"{command}\n"
             f"__CM_EXIT__=$?\n"
             f"echo \"{delimiter}\"\n"
             f"echo \"EXIT:$__CM_EXIT__\"\n"
-            f"echo \"PWD:$(pwd)\"\n"
+            f"echo \"PWD:$({pwd_cmd})\"\n"
             f"echo \"{delimiter}\"\n"
         )
 
-        shell_bin = shutil.which("bash") or shutil.which("zsh") or "/bin/sh"
+        shell_bin = _get_shell()
         cmd_env = {**os.environ, **self.env}
 
         logger.info("terminal.session.exec", session_id=self.session_id, command=command[:150], cwd=self.cwd)
@@ -95,6 +112,19 @@ class TerminalSession:
                                 pass
                         elif line.startswith("PWD:"):
                             new_pwd = line[4:].strip()
+                            if os.name == "nt":
+                                import re
+                                m_wsl = re.match(r"^/mnt/([a-zA-Z])/(.*)", new_pwd)
+                                if m_wsl:
+                                    candidate = f"{m_wsl.group(1).upper()}:\\{m_wsl.group(2).replace('/', '\\')}"
+                                    if os.path.isdir(candidate):
+                                        new_pwd = candidate
+                                else:
+                                    m_msys = re.match(r"^/([a-zA-Z])/(.*)", new_pwd)
+                                    if m_msys:
+                                        candidate = f"{m_msys.group(1).upper()}:\\{m_msys.group(2).replace('/', '\\')}"
+                                        if os.path.isdir(candidate):
+                                            new_pwd = candidate
                             if os.path.isdir(new_pwd):
                                 self.cwd = new_pwd
 

@@ -27,7 +27,7 @@ class NebiusProvider(AIProvider):
 
     def __init__(self) -> None:
         self._client = AsyncOpenAI(
-            api_key=settings.nebius_api_key,
+            api_key=settings.nebius_api_key or "mock-nebius-key",
             base_url=settings.nebius_base_url,
         )
         self._model = settings.nebius_model
