@@ -55,6 +55,25 @@ class ToolDefinition:
         }
 
 
+TOOL_ALIASES: dict[str, str] = {
+    "execute_command": "terminal",
+    "run_command": "terminal",
+    "bash": "terminal",
+    "sh": "terminal",
+    "shell": "terminal",
+    "terminal_run": "terminal",
+    "list_files": "list_directory",
+    "list_dir": "list_directory",
+    "view_file": "read_file",
+    "create_file": "write_file",
+    "modify_file": "edit_file",
+    "apply_patch": "patch_file",
+    "search": "search_files",
+    "grep": "search_files",
+    "find_files": "search_files",
+}
+
+
 class ToolRegistry:
     """Central registry for all available tools."""
 
@@ -69,8 +88,9 @@ class ToolRegistry:
         logger.debug("tools.registry.registered", tool=tool.name, permission=tool.permission.value)
 
     def get(self, name: str) -> ToolDefinition:
-        """Get a tool by name. Raises ToolError if not found."""
-        tool = self._tools.get(name)
+        """Get a tool by name. Supports aliases. Raises ToolError if not found."""
+        canonical = TOOL_ALIASES.get(name, name)
+        tool = self._tools.get(canonical)
         if tool is None:
             raise ToolError(ErrorCode.TOOL_NOT_FOUND, f"Tool not found: {name}")
         return tool

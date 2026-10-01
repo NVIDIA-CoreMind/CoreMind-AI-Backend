@@ -42,20 +42,29 @@ class ToolExecutor:
         5. Return structured result
         """
         tool = self._registry.get(tool_name)
+        clean_name = tool.name
+
+        # Map common argument aliases
+        if clean_name == "terminal":
+            if "command" not in args and "cmd" in args:
+                args["command"] = args["cmd"]
+        elif clean_name == "list_directory":
+            if "path" not in args:
+                args["path"] = args.get("directory") or args.get("dir") or args.get("folder") or "."
 
         # Permission check (bypass if explicitly approved by user)
         if not is_approved:
-            check_permission(tool.permission, tool_name)
+            check_permission(tool.permission, clean_name)
 
-        # Path validation for file tools
+        # Path validation and normalization for file tools
         if "path" in args:
-            validate_path(args["path"], project_path)
+            args["path"] = validate_path(args["path"], project_path)
         if "file_path" in args:
-            validate_path(args["file_path"], project_path)
+            args["file_path"] = validate_path(args["file_path"], project_path)
 
         logger.info(
             "tools.execute.start",
-            tool=tool_name,
+            tool=clean_name,
             agent_id=agent_id or "",
             permission=tool.permission.value,
         )

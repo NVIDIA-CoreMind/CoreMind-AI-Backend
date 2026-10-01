@@ -100,6 +100,12 @@ async def agent_status(agent_id: str) -> dict[str, Any]:
     return status
 
 
+@router.get("/tasks")
+async def list_agent_tasks() -> list[dict[str, Any]]:
+    """List all agent tasks."""
+    return agent_manager.list_agents()
+
+
 @router.get("/questions")
 async def list_pending_questions(agent_id: str | None = None) -> list[dict[str, Any]]:
     """List pending questions waiting for user response."""

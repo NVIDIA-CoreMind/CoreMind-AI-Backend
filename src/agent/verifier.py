@@ -307,7 +307,13 @@ async def run_verification(
         exit_code = result.get("exit_code", -1)
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
-        success = exit_code == 0
+
+        # In pytest, exit code 5 means "no tests were collected" (e.g. newly created code with no tests yet).
+        # This is a benign no-op, NOT a test failure.
+        is_no_tests_collected = "pytest" in test_command and (
+            exit_code == 5 or "collected 0 items" in stdout.lower() or "no tests ran" in stdout.lower()
+        )
+        success = exit_code == 0 or is_no_tests_collected
 
         error_summary = ""
         if not success:

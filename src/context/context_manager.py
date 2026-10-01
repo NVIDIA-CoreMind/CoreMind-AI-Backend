@@ -52,6 +52,7 @@ class ContextManager:
         self._files_read: dict[str, str] = {}
         self._files_changed: list[str] = []
         self._repo_map = RepoMap(project_path)
+        self._user_task: str | None = None
 
     def build_messages(self, user_task: str | None = None) -> list[dict[str, Any]]:
         """
@@ -103,9 +104,12 @@ class ContextManager:
         if digest:
             messages.append({"role": "system", "content": digest})
 
+        if user_task:
+            self._user_task = user_task
+
         # Layer 6: User Task / Instructions
-        if user_task and not self._conversation:
-            messages.append({"role": "user", "content": user_task})
+        if self._user_task and (not self._conversation or self._conversation[0].get("role") != "user"):
+            messages.append({"role": "user", "content": self._user_task})
 
         # Layer 7: Active Conversation & Tool Execution
         messages.extend(self._conversation)
@@ -183,3 +187,4 @@ class ContextManager:
         self._tool_results.clear()
         self._files_read.clear()
         self._files_changed.clear()
+        self._user_task = None

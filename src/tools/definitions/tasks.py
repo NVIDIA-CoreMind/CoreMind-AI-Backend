@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.task_graph import TaskNodeStatus
+from src.events.event_bus import event_bus
+from src.events.events import CoreMindEvent, EventType
 from src.tools.registry import PermissionLevel, ToolDefinition
 from src.utils.errors import ErrorCode, ToolError
 
@@ -50,6 +52,12 @@ async def execute_create_task(
         dependencies=dependencies or [],
         priority=priority,
     )
+    if agent_id:
+        await event_bus.emit(CoreMindEvent(
+            type=EventType.PLAN_CREATED,
+            agent_id=agent_id,
+            data={"goal": graph.goal, "tasks": graph.to_dict()["tasks"]},
+        ))
     return {"status": "created", "task": node.to_dict()}
 
 
@@ -78,6 +86,20 @@ async def execute_update_task(
     node = graph.update_task(task_id, status=node_status, result=result, error=error)
     if not node:
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Task '{task_id}' not found in task graph.")
+
+    if agent_id:
+        if node_status == TaskNodeStatus.COMPLETED:
+            await event_bus.emit(CoreMindEvent(
+                type=EventType.TASK_COMPLETED,
+                agent_id=agent_id,
+                data={"task_id": task_id, "title": node.title, "status": "completed", "result": result},
+            ))
+        elif node_status == TaskNodeStatus.IN_PROGRESS:
+            await event_bus.emit(CoreMindEvent(
+                type=EventType.TASK_STARTED,
+                agent_id=agent_id,
+                data={"task_id": task_id, "title": node.title},
+            ))
 
     return {"status": "updated", "task": node.to_dict()}
 

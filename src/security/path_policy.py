@@ -24,15 +24,75 @@ BLOCKED_EXTENSIONS = {
 }
 
 
-def validate_path(file_path: str, project_path: str) -> None:
+SYSTEM_ABSOLUTE_ROOTS = (
+    "/etc", "/var", "/tmp", "/usr", "/bin", "/opt", "/dev",
+    "/proc", "/sys", "/System", "/Library", "/Applications",
+    "/Windows", "/Program Files", "/Users",
+)
+
+
+def normalize_project_path(file_path: str, project_path: str) -> str:
+    """
+    Normalize simulated absolute paths or leading slashes from LLMs
+    (e.g., '/main.py', '/home/user/project/main.py', '/workspace/main.py')
+    into safe relative project paths when possible.
+    """
+    import re
+    project_root = Path(project_path).resolve()
+    raw = Path(file_path)
+
+    # 1. If it is already an absolute path that lives within project_root
+    try:
+        if raw.is_absolute() and raw.resolve().is_relative_to(project_root):
+            return str(raw.resolve().relative_to(project_root))
+    except (ValueError, RuntimeError):
+        pass
+
+    s = file_path.strip().replace("\\", "/")
+
+    # 2. Match common simulated container/sandbox prefixes:
+    # /home/<user>/<project>/... or /workspace/<project>/... or /app/<project>/...
+    m = re.match(r"^(?:/(?:home/[^/]+|workspace|app|root)/[^/]+)/(.*)$", s)
+    if m and m.group(1):
+        candidate = m.group(1)
+        if not candidate.startswith("/") and not candidate.startswith(".."):
+            target = (project_root / candidate).resolve()
+            if target.is_relative_to(project_root):
+                return candidate
+
+    # 3. Match project folder name as leading segment: e.g. /<project_root.name>/...
+    proj_name = project_root.name
+    if proj_name and s.startswith(f"/{proj_name}/"):
+        candidate = s[len(f"/{proj_name}/"):]
+        target = (project_root / candidate).resolve()
+        if target.is_relative_to(project_root):
+            return candidate
+
+    # Never strip actual system roots if not within project_root
+    for sys_root in SYSTEM_ABSOLUTE_ROOTS:
+        if s == sys_root or s.startswith(sys_root + "/"):
+            return file_path
+
+    # 4. Leading slash strip: /src/app.py -> src/app.py, /main.py -> main.py
+    clean = s.lstrip("/")
+    target = (project_root / clean).resolve()
+    if target.is_relative_to(project_root):
+        return clean
+
+    return file_path
+
+
+def validate_path(file_path: str, project_path: str) -> str:
     """
     Validate that a file path is within the project root.
+    Returns the cleaned relative path if valid.
 
     Raises ToolError if the path escapes the project directory.
     """
     try:
+        norm_path = normalize_project_path(file_path, project_path)
         project_root = Path(project_path).resolve()
-        target = (project_root / file_path).resolve()
+        target = (project_root / norm_path).resolve()
 
         # Check directory traversal
         if not target.is_relative_to(project_root):
@@ -62,6 +122,8 @@ def validate_path(file_path: str, project_path: str) -> None:
                 ErrorCode.TOOL_PERMISSION_DENIED,
                 f"Access to files with extension '{target.suffix}' is blocked",
             )
+
+        return norm_path
 
     except ToolError:
         raise

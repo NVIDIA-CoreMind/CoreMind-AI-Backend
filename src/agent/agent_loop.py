@@ -138,6 +138,10 @@ class AgentLoop:
                     temperature=0.0,
                 )
 
+                # Stream AI message/token to frontend
+                if response.content:
+                    await self._emit(EventType.AI_TOKEN, {"token": response.content})
+
                 # Add assistant message to context
                 self._context.add_assistant_message(
                     content=response.content,
@@ -162,11 +166,16 @@ class AgentLoop:
                     # Track in task
                     self._task.tool_calls.extend(response.tool_calls)
 
-                    # Track file changes
+                    # Track file changes and tool types
+                    called_edit_tool = False
+                    called_inspection_tool = False
+                    called_execution_tool = False
+
                     for tc in response.tool_calls:
                         func = tc.get("function", {})
                         name = func.get("name", "")
                         if name in ("write_file", "edit_file", "patch_file"):
+                            called_edit_tool = True
                             try:
                                 args = json.loads(func.get("arguments", "{}"))
                                 path = args.get("path") or args.get("file_path") or ""
@@ -175,16 +184,36 @@ class AgentLoop:
                                     self._context.record_file_changed(path)
                             except json.JSONDecodeError:
                                 pass
+                        elif name in ("list_directory", "read_file", "search_files", "git_status", "git_log"):
+                            called_inspection_tool = True
+                        elif name in ("terminal", "sandbox_execute"):
+                            called_execution_tool = True
 
-                    # If current subtask was in progress, complete it if relevant changes were made
-                    if current_subtask_id and self._task.files_changed:
-                        self._task.task_graph.complete_task(
-                            current_subtask_id, result="Action executed successfully"
-                        )
-                        await self._emit(
-                            EventType.TASK_COMPLETED,
-                            {"task_id": current_subtask_id, "status": "completed"},
-                        )
+                    # Progress task graph based on actions taken
+                    if current_subtask_id:
+                        node = self._task.task_graph.get_task(current_subtask_id)
+                        title_lower = (node.title if node else "").lower()
+                        should_complete = False
+
+                        if called_edit_tool:
+                            should_complete = True
+                        elif called_inspection_tool and any(
+                            kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze", "explore")
+                        ):
+                            should_complete = True
+                        elif called_execution_tool and any(
+                            kw in title_lower for kw in ("verify", "test", "run", "check")
+                        ):
+                            should_complete = True
+
+                        if should_complete:
+                            self._task.task_graph.complete_task(
+                                current_subtask_id, result="Action executed successfully"
+                            )
+                            await self._emit(
+                                EventType.TASK_COMPLETED,
+                                {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
+                            )
 
                     # Continue the loop
                     if self._state.can_transition(AgentState.EXECUTING):
@@ -192,24 +221,52 @@ class AgentLoop:
                     messages = self._context.build_messages()
                     continue
 
-                # If AI responded with text only (no tool calls), it indicates completion
-                if current_subtask_id:
-                    self._task.task_graph.complete_task(
-                        current_subtask_id, result="Finished without additional tool calls"
-                    )
-                    await self._emit(
-                        EventType.TASK_COMPLETED,
-                        {"task_id": current_subtask_id, "status": "completed"},
-                    )
-                break
+                # If AI responded with text only (no tool calls):
+                # If changes have already been made or no file-oriented tasks remain, complete
+                has_pending_creation = not self._task.files_changed and any(
+                    any(kw in t.title.lower() for kw in ("create", "edit", "write", "make", "implement", "code", "file", "build"))
+                    for t in self._task.task_graph._tasks.values()
+                    if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS)
+                )
+                if not has_pending_creation:
+                    if current_subtask_id:
+                        node = self._task.task_graph.get_task(current_subtask_id)
+                        self._task.task_graph.complete_task(
+                            current_subtask_id, result="Finished without additional tool calls"
+                        )
+                        await self._emit(
+                            EventType.TASK_COMPLETED,
+                            {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
+                        )
+                    break
 
+                # AI chatted without executing pending creation/edit task — nudge it to create the file
+                logger.info("agent.loop.nudge_action", agent_id=self._task.agent_id)
+                self._context.add_user_message(
+                    "You responded with text, but the task requires creating or modifying code. "
+                    "Please proceed now to create or edit the necessary file(s) using the `write_file` or `edit_file` tool. "
+                    "If a filename or details were not specified, use standard conventions (e.g. create `main.py`)."
+                )
+                if current_subtask_id:
+                    node = self._task.task_graph.get_task(current_subtask_id)
+                    title_lower = (node.title if node else "").lower()
+                    if any(kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze")):
+                        self._task.task_graph.complete_task(current_subtask_id, result="Inspection completed")
+                        await self._emit(
+                            EventType.TASK_COMPLETED,
+                            {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
+                        )
                 messages = self._context.build_messages()
 
-            # Mark remaining tasks completed if not failed
+            # Mark all remaining tasks completed if not failed, and emit TASK_COMPLETED so UI updates
             for t in self._task.task_graph._tasks.values():
                 if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS):
                     t.status = TaskNodeStatus.COMPLETED
                     t.completed_at = datetime.now(UTC)
+                    await self._emit(
+                        EventType.TASK_COMPLETED,
+                        {"task_id": t.id, "title": t.title, "status": "completed"},
+                    )
 
             # Step 4: Verification Loop
             if self._task.files_changed and not self._stopped:
