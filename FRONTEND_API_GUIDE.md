@@ -20,7 +20,7 @@
 7. [Project & Code Intelligence APIs](#7-project--code-intelligence-apis)
 8. [Persistent Terminal & Background Processes](#8-persistent-terminal--background-processes)
 9. [Direct Tools & Sandbox APIs](#9-direct-tools--sandbox-apis)
-10. [Settings & AI Provider Diagnostics](#10-settings--ai-provider-diagnostics)
+10. [AI Capabilities & Provider Settings](#10-ai-capabilities--provider-settings)
 11. [Error Handling & Status Codes](#11-error-handling--status-codes)
 12. [Ready-to-Use TypeScript SDK & React Hooks](#12-ready-to-use-typescript-sdk--react-hooks)
 
@@ -727,7 +727,9 @@ The IDE can also trigger file tools and sandboxes directly outside the agent loo
 
 ---
 
-## 10. Settings & AI Provider Diagnostics
+## 10. AI Capabilities & Provider Settings
+
+The backend exposes direct AI routes for synchronous chat, planning, code generation, and diagnostic tools.
 
 #### 1. Safe Settings (Non-Secret)
 ```http
@@ -762,6 +764,85 @@ POST /v1/ai/test
 #### 3. AI Token Usage
 ```http
 GET /v1/ai/usage
+```
+
+#### 4. List Available Models
+```http
+GET /v1/ai/models
+```
+**Response (200 OK):**
+```json
+{
+  "provider": "nebius",
+  "models": ["nvidia/llama-3.3-nemotron-super-49b-v1", "meta-llama/Llama-3.1-70B-Instruct"]
+}
+```
+
+#### 5. Synchronous Chat with Tools
+Executes the agent loop synchronously and returns the final assistant response along with conversation history.
+```http
+POST /v1/ai/chat
+Content-Type: application/json
+
+{
+  "query": "Fix the authentication session timeout bug",
+  "project_path": "/Users/developer/projects/my-web-app",
+  "history": []
+}
+```
+**Response (200 OK):**
+```json
+{
+  "status": "ok",
+  "response": "I've successfully updated the timeout logic.",
+  "agent_id": "agent_x1y2z3",
+  "files_changed": ["src/auth.py"],
+  "steps": 3,
+  "history": [
+    { "role": "user", "content": "Fix the authentication session timeout bug" },
+    { "role": "assistant", "content": "I've successfully updated the timeout logic." }
+  ]
+}
+```
+
+#### 6. AI Architecture Planning
+Generates a structured, step-by-step implementation plan for a complex objective.
+```http
+POST /v1/ai/plan
+Content-Type: application/json
+
+{
+  "objective": "Implement real-time collaboration",
+  "project_path": "/Users/developer/projects/my-web-app",
+  "context": "We are using FastAPI and WebSockets."
+}
+```
+**Response (200 OK):**
+```json
+{
+  "status": "ok",
+  "plan": "# Implementation Plan\n\n1. Define WebSocket routes...\n"
+}
+```
+
+#### 7. Direct Code Generation
+Generates high-quality code based on a task and an optional plan.
+```http
+POST /v1/ai/code
+Content-Type: application/json
+
+{
+  "task": "Write the WebSocket manager class",
+  "plan": "Use a dictionary to keep track of active connections...",
+  "project_path": "/Users/developer/projects/my-web-app"
+}
+```
+**Response (200 OK):**
+```json
+{
+  "status": "ok",
+  "code": "class WebSocketManager:\n    def __init__(self):\n        self.active_connections = {}\n..."
+}
 ```
 
 ---
@@ -925,6 +1006,32 @@ export class CoreMindClient {
 
   async getCurrentUser(): Promise<User> {
     return this.request<User>('/v1/auth/me');
+  }
+
+  // --- AI Capabilities ---
+  async getAiModels() {
+    return this.request<{ provider: string; models: string[] }>('/v1/ai/models');
+  }
+
+  async chatWithTools(query: string, projectPath: string, history: any[] = []) {
+    return this.request<any>('/v1/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ query, project_path: projectPath, history }),
+    });
+  }
+
+  async createPlan(objective: string, projectPath: string, context?: string) {
+    return this.request<{ status: string; plan: string }>('/v1/ai/plan', {
+      method: 'POST',
+      body: JSON.stringify({ objective, project_path: projectPath, context }),
+    });
+  }
+
+  async generateCode(task: string, projectPath: string, plan?: string) {
+    return this.request<{ status: string; code: string }>('/v1/ai/code', {
+      method: 'POST',
+      body: JSON.stringify({ task, plan, project_path: projectPath }),
+    });
   }
 
   // --- Agent ---

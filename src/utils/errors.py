@@ -20,6 +20,7 @@ class ErrorCode(StrEnum):
     AI_RATE_LIMIT = "AI_RATE_LIMIT"
     AI_TIMEOUT = "AI_TIMEOUT"
     AI_INVALID_RESPONSE = "AI_INVALID_RESPONSE"
+    AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"
     AI_UNKNOWN = "AI_UNKNOWN"
 
     # Tool errors
@@ -76,6 +77,7 @@ _AI_STATUS_MAP: dict[ErrorCode, int] = {
     ErrorCode.AI_RATE_LIMIT: 429,
     ErrorCode.AI_TIMEOUT: 504,
     ErrorCode.AI_MODEL_UNAVAILABLE: 503,
+    ErrorCode.AI_BUDGET_EXHAUSTED: 402,
 }
 
 _TOOL_STATUS_MAP: dict[ErrorCode, int] = {
