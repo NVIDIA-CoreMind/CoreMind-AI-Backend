@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     # ── Web Search ──────────────────────────────────────────────────
     web_search_max_results: int = Field(default=5, ge=1, le=10)
     web_search_timeout_s: int = Field(default=12, ge=3, le=30)
+    tavily_api_key: str = Field(default="", description="Tavily API Key for web search")
 
     # ── Sandbox ─────────────────────────────────────────────────────
     sandbox_type: str = Field(default="local", pattern=r"^(local|nebius)$")

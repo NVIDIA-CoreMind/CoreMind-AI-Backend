@@ -172,6 +172,34 @@ async def _wikipedia(client: httpx.AsyncClient, query: str, limit: int) -> list[
     return results
 
 
+async def _tavily_search(
+    client: httpx.AsyncClient,
+    query: str,
+    limit: int,
+) -> list[dict[str, str]]:
+    response = await client.post(
+        "https://api.tavily.com/search",
+        json={
+            "api_key": settings.tavily_api_key,
+            "query": query,
+            "max_results": limit,
+            "include_answer": False,
+        },
+        headers={"Content-Type": "application/json"},
+    )
+    response.raise_for_status()
+    data = response.json()
+    results: list[dict[str, str]] = []
+    for item in data.get("results", []):
+        results.append({
+            "title": _clip(str(item.get("title") or ""), 120),
+            "url": str(item.get("url") or ""),
+            "snippet": _clip(str(item.get("content") or "")),
+            "source": "tavily",
+        })
+    return results
+
+
 def _merge(*groups: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
     merged: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -206,26 +234,36 @@ async def execute_web_search(
     errors: list[str] = []
 
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        try:
-            html_results = await _duckduckgo_html(client, cleaned, limit)
-        except Exception as exc:
-            errors.append(f"duckduckgo_html: {exc}")
-            logger.warn("tools.web_search.html_failed", error=str(exc))
-
-        try:
-            instant_results = await _duckduckgo_instant(client, cleaned, limit)
-        except Exception as exc:
-            errors.append(f"duckduckgo_instant: {exc}")
-            logger.warn("tools.web_search.instant_failed", error=str(exc))
-
-        if len(html_results) + len(instant_results) < limit:
+        if settings.tavily_api_key:
             try:
-                wiki_results = await _wikipedia(client, cleaned, limit)
+                tavily_results = await _tavily_search(client, cleaned, limit)
+                results = _merge(tavily_results, limit=limit)
             except Exception as exc:
-                errors.append(f"wikipedia: {exc}")
-                logger.warn("tools.web_search.wikipedia_failed", error=str(exc))
+                errors.append(f"tavily: {exc}")
+                logger.warn("tools.web_search.tavily_failed", error=str(exc))
+                results = []
+        else:
+            try:
+                html_results = await _duckduckgo_html(client, cleaned, limit)
+            except Exception as exc:
+                errors.append(f"duckduckgo_html: {exc}")
+                logger.warn("tools.web_search.html_failed", error=str(exc))
 
-    results = _merge(html_results, instant_results, wiki_results, limit=limit)
+            try:
+                instant_results = await _duckduckgo_instant(client, cleaned, limit)
+            except Exception as exc:
+                errors.append(f"duckduckgo_instant: {exc}")
+                logger.warn("tools.web_search.instant_failed", error=str(exc))
+
+            if len(html_results) + len(instant_results) < limit:
+                try:
+                    wiki_results = await _wikipedia(client, cleaned, limit)
+                except Exception as exc:
+                    errors.append(f"wikipedia: {exc}")
+                    logger.warn("tools.web_search.wikipedia_failed", error=str(exc))
+
+            results = _merge(html_results, instant_results, wiki_results, limit=limit)
+
     logger.info("tools.web_search.completed", query=cleaned[:80], results=len(results))
     payload: dict[str, Any] = {
         "query": cleaned,

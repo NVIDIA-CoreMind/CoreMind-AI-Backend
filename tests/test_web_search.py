@@ -32,6 +32,12 @@ class _FakeClient:
                 return response
         raise AssertionError(f"Unexpected URL: {url}")
 
+    async def post(self, url: str, **_kwargs: Any) -> _FakeResponse:
+        for prefix, response in self._routes.items():
+            if url.startswith(prefix):
+                return response
+        raise AssertionError(f"Unexpected URL: {url}")
+
     async def __aenter__(self) -> "_FakeClient":
         return self
 
@@ -41,6 +47,8 @@ class _FakeClient:
 
 @pytest.mark.asyncio
 async def test_web_search_merges_capped_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Explicitly disable Tavily API key for this test to force DDG/Wiki fallback
+    monkeypatch.setattr(web_search_mod.settings, "tavily_api_key", "")
     html = """
     <a class="result__a" href="https://docs.python.org/3/library/asyncio.html">asyncio docs</a>
     <a class="result__snippet">Official asyncio documentation</a>
@@ -78,6 +86,24 @@ async def test_web_search_merges_capped_results(monkeypatch: pytest.MonkeyPatch)
     urls = [item["url"] for item in result["results"]]
     assert "https://docs.python.org/3/library/asyncio.html" in urls
     assert len(result["results"]) <= 2
+
+
+@pytest.mark.asyncio
+async def test_web_search_tavily(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(web_search_mod.settings, "tavily_api_key", "test-key")
+    tavily_response = {
+        "results": [
+            {"title": "Tavily docs", "url": "https://tavily.com", "content": "Tavily search API"}
+        ]
+    }
+    client = _FakeClient({
+        "https://api.tavily.com/search": _FakeResponse(tavily_response),
+    })
+    monkeypatch.setattr(web_search_mod.httpx, "AsyncClient", lambda **_kwargs: client)
+
+    result = await web_search_mod.execute_web_search("tavily search")
+    assert result["returned"] == 1
+    assert result["results"][0]["url"] == "https://tavily.com"
 
 
 @pytest.mark.asyncio
