@@ -111,7 +111,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
             loop._context.add_user_message(msg.content)
         elif msg.role == "assistant":
             # Pydantic may have tool_calls as list of dicts, but it's safe to pass
-            tool_calls = msg.tool_calls if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+            tool_calls = getattr(msg, "tool_calls", None)
             loop._context.add_assistant_message(msg.content, tool_calls)
         elif msg.role == "tool":
             loop._context.add_tool_result(msg.tool_call_id or "", msg.name or "tool", msg.content)
