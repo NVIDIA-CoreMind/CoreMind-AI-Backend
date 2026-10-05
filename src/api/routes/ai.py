@@ -4,6 +4,9 @@ CoreMind Backend — AI API Routes.
 POST /v1/ai/test   — Test AI connectivity
 GET  /v1/ai/models — List available models
 GET  /v1/ai/usage  — Get token usage stats
+POST /v1/ai/chat   — Chat with tools
+POST /v1/ai/plan   — AI workflow planning
+POST /v1/ai/code   — High-quality code generation
 """
 
 from __future__ import annotations
@@ -108,7 +111,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
             loop._context.add_user_message(msg.content)
         elif msg.role == "assistant":
             # Pydantic may have tool_calls as list of dicts, but it's safe to pass
-            tool_calls = msg.tool_calls if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+            tool_calls = getattr(msg, "tool_calls", None)
             loop._context.add_assistant_message(msg.content, tool_calls)
         elif msg.role == "tool":
             loop._context.add_tool_result(msg.tool_call_id or "", msg.name or "tool", msg.content)
@@ -145,4 +148,86 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
             "error": str(exc),
             "response": f"Agent loop failed: {exc}",
             "history": []
+        }
+
+
+class PlanRequest(BaseModel):
+    objective: str
+    project_path: str = Field(default=".")
+    context: str | None = None
+
+
+@router.post("/plan")
+async def create_plan(request: PlanRequest) -> dict[str, Any]:
+    """Create a step-by-step plan for a complex coding objective."""
+    provider = get_ai_provider()
+    logger.info("api.ai.plan", objective=request.objective[:50])
+    
+    system_prompt = (
+        "You are an expert AI architect and staff software engineer. "
+        "Your task is to create a detailed, step-by-step implementation plan for the user's objective. "
+        "Focus on architecture, edge cases, best practices, modularity, and exact steps to achieve the goal. "
+        "Provide your output as a structured markdown document with clear phases."
+    )
+    
+    user_prompt = f"Objective: {request.objective}\n"
+    if request.context:
+        user_prompt += f"Context:\n{request.context}\n"
+        
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    try:
+        response = await provider.chat(messages=messages)
+        return {
+            "status": "ok",
+            "plan": response.content
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error": str(exc)
+        }
+
+
+class CodeRequest(BaseModel):
+    task: str
+    plan: str | None = None
+    project_path: str = Field(default=".")
+
+
+@router.post("/code")
+async def generate_code(request: CodeRequest) -> dict[str, Any]:
+    """Generate high-quality code based on a task and an optional plan."""
+    provider = get_ai_provider()
+    logger.info("api.ai.code", task=request.task[:50])
+    
+    system_prompt = (
+        "You are an elite software developer. "
+        "Your task is to write clean, efficient, robust, well-documented, and production-ready code. "
+        "Follow industry best practices, include necessary type hints, and handle errors gracefully. "
+        "Make sure the code matches any provided architectural plan."
+    )
+    
+    user_prompt = f"Task: {request.task}\n"
+    if request.plan:
+        user_prompt += f"Plan to follow:\n{request.plan}\n"
+        
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    try:
+        response = await provider.chat(messages=messages)
+        return {
+            "status": "ok",
+            "code": response.content
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error": str(exc)
         }
