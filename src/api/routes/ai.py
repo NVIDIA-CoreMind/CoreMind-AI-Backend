@@ -79,73 +79,76 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
-    """Chat with the AI, allowing it to use tools (like web search) before answering."""
-    from src.tools.registry import tool_registry
-    from src.tools.executor import ToolExecutor
-    import json
+    """Chat with the AI, using the full AgentLoop for the best workflow planning and coding."""
+    from src.agent.agent_loop import AgentLoop
+    from src.agent.task import AgentTask
+    from src.project.project_manager import project_manager
+    from src.utils.ids import agent_id as gen_agent_id
+    from src.utils.ids import session_id as gen_session_id
 
     logger.info("api.ai.chat", query=request.query[:50])
-    provider = get_ai_provider()
-    executor = ToolExecutor(tool_registry)
 
-    tools = tool_registry.to_openai_tools()
+    aid = gen_agent_id()
+    sid = gen_session_id()
 
-    messages: list[dict[str, Any]] = [
-        {
-            "role": "system",
-            "content": "You are CoreMind AI. Use the web_search tool to find current facts and docs. "
-            "Use search_files, read_file to inspect the project. Combine internal and web data to answer."
-        }
-    ]
+    # Ensure project is opened
+    if project_manager.get_project(request.project_path) is None:
+        await project_manager.open_project(request.project_path)
 
+    agent_task = AgentTask(
+        task_id=aid,
+        session_id=sid,
+        agent_id=aid,
+        task=request.query,
+        project_path=request.project_path,
+    )
+
+    loop = AgentLoop(agent_task)
+
+    # Inject history into context manager
     for msg in request.history:
-        m: dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
-        if msg.tool_calls:
-            m["tool_calls"] = msg.tool_calls
-        if msg.tool_call_id:
-            m["tool_call_id"] = msg.tool_call_id
-        if msg.name:
-            m["name"] = msg.name
-        messages.append(m)
+        if msg.role == "user":
+            loop._context.add_user_message(msg.content)
+        elif msg.role == "assistant":
+            # Pydantic may have tool_calls as list of dicts, but it's safe to pass
+            tool_calls = msg.tool_calls if hasattr(msg, "tool_calls") else msg.get("tool_calls")
+            loop._context.add_assistant_message(msg.content, tool_calls)
+        elif msg.role == "tool":
+            loop._context.add_tool_result(msg.tool_call_id or "", msg.name or "tool", msg.content)
 
-    messages.append({"role": "user", "content": request.query})
+    try:
+        # Run the full agent loop synchronously
+        result = await loop.run()
 
-    max_turns = 5
-    for _ in range(max_turns):
-        response = await provider.chat(messages=messages, tools=tools)
+        # Get final response from the conversation
+        messages = loop._context.build_messages()
 
-        ast_msg: dict[str, Any] = {"role": "assistant", "content": response.content or ""}
-        if response.tool_calls:
-            ast_msg["tool_calls"] = response.tool_calls
-        messages.append(ast_msg)
+        # Find the last assistant message to return as response
+        final_response = "Agent task completed."
+        for m in reversed(messages):
+            if m.get("role") == "assistant" and m.get("content"):
+                final_response = m.get("content")
+                break
 
-        if not response.tool_calls:
-            return {
-                "status": "ok",
-                "response": response.content,
-                "history": messages[1:],
-            }
+        if result.error:
+            final_response += f"\n\nError encountered: {result.error}"
 
-        for tc in response.tool_calls:
-            try:
-                res = await executor.execute_tool_call(tc, project_path=request.project_path)
-                result_str = json.dumps(res.get("result", res))
-            except Exception as e:
-                result_str = f"Error: {e}"
-
-            messages.append({
-                "role": "tool",
-                "content": result_str,
-                "tool_call_id": tc["id"],
-                "name": tc["function"]["name"]
-            })
-
-    return {
-        "status": "error",
-        "error": "Max tool turns exceeded",
-        "response": messages[-1].get("content", ""),
-        "history": messages[1:]
-    }
+        return {
+            "status": "ok" if result.status.value == "completed" else "error",
+            "response": final_response,
+            "agent_id": aid,
+            "files_changed": result.files_changed,
+            "steps": result.steps_completed,
+            "history": messages[1:],  # Exclude system prompt
+        }
+    except Exception as exc:
+        logger.error("api.ai.chat_error", error=str(exc))
+        return {
+            "status": "error",
+            "error": str(exc),
+            "response": f"Agent loop failed: {exc}",
+            "history": []
+        }
 
 
 class PlanRequest(BaseModel):
