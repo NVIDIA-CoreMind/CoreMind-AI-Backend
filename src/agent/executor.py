@@ -93,8 +93,17 @@ class AgentExecutor:
 
                 # Check if tool requires approval
                 tool_def = tool_registry.get(tool_name)
+                needs_approval = requires_approval(tool_def.permission)
+
+                # Dynamically require approval for unsafe terminal commands
+                if tool_name in ("terminal", "sandbox_execute"):
+                    from src.security.command_policy import is_safe_command
+                    command = args.get("command", "")
+                    if not is_safe_command(command):
+                        needs_approval = True
+
                 is_approved = False
-                if requires_approval(tool_def.permission):
+                if needs_approval:
                     approval = await approval_manager.request_approval(
                         agent_id=self._agent_id,
                         tool_name=tool_name,

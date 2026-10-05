@@ -171,6 +171,7 @@ def _register_all_tools(target: ToolRegistry) -> None:
     from src.tools.definitions.terminal import terminal_tool
     from src.tools.definitions.web_search import web_search_tool
     from src.tools.definitions.write_file import write_file_tool
+    from src.tools.definitions.flutter import flutter_check_env_tool
 
     for tool in [
         read_file_tool,
@@ -191,6 +192,7 @@ def _register_all_tools(target: ToolRegistry) -> None:
         memory_save_tool,
         memory_recall_tool,
         memory_forget_tool,
+        flutter_check_env_tool,
     ]:
         target.register(tool)
 
