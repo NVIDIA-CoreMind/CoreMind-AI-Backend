@@ -62,6 +62,11 @@ def handle_openai_error(exc: Exception) -> NoReturn:
                 ErrorCode.AI_MODEL_UNAVAILABLE,
                 f"Model not found on Nebius: {exc}",
             ) from exc
+        if status == 402:
+            raise AIError(
+                ErrorCode.AI_BUDGET_EXHAUSTED,
+                "Payment Required: You have exhausted your budget. Please add funds to continue using the API.",
+            ) from exc
         raise AIError(
             ErrorCode.AI_UNKNOWN,
             f"Nebius API error (HTTP {status}): {exc}",
