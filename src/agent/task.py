@@ -45,6 +45,7 @@ class AgentTask:
     execution_results: list[dict[str, Any]] = field(default_factory=list)
     steps_completed: int = 0
     error: str | None = None
+    response: str | None = None
     task_graph: TaskGraph = field(default_factory=TaskGraph)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +62,7 @@ class AgentTask:
             "files_changed": self.files_changed,
             "tool_calls_count": len(self.tool_calls),
             "error": self.error,
+            "response": self.response,
             "task_graph": self.task_graph.to_dict(),
         }
 

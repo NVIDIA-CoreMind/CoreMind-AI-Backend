@@ -16,7 +16,7 @@ from src.utils.logger import logger
 class AuditLogEntry:
     def __init__(
         self,
-        action: str,
+        action: str, 
         user_id: str = "system",
         agent_id: str | None = None,
         details: dict[str, Any] | None = None,
