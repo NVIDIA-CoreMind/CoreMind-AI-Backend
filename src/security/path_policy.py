@@ -16,12 +16,22 @@ from src.utils.logger import logger
 BLOCKED_PATHS = {
     ".env",
     ".env.local",
+    ".env.development",
+    ".env.production",
     ".git/config",
+    "credentials",
+    "secrets.json",
+    ".aws/credentials",
+    ".aws/config",
+    ".ssh/id_rsa",
+    ".ssh/id_ed25519",
 }
 
 BLOCKED_EXTENSIONS = {
     ".pem", ".key", ".p12", ".pfx", ".jks",
+    ".cer", ".crt", ".keystore",
 }
+
 
 
 SYSTEM_ABSOLUTE_ROOTS = (

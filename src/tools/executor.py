@@ -18,6 +18,8 @@ from src.utils.errors import ErrorCode, ToolError
 from src.utils.logger import logger
 
 
+from src.security.permission_manager import permission_manager, AgentMode
+
 class ToolExecutor:
     """Executes tool calls with security checks and timeouts."""
 
@@ -31,6 +33,8 @@ class ToolExecutor:
         project_path: str,
         agent_id: str | None = None,
         is_approved: bool = False,
+        agent_mode: AgentMode = AgentMode.WORK,
+        network_enabled: bool = True,
     ) -> dict[str, Any]:
         """
         Execute a tool by name with the given arguments.
@@ -52,9 +56,29 @@ class ToolExecutor:
             if "path" not in args:
                 args["path"] = args.get("directory") or args.get("dir") or args.get("folder") or "."
 
-        # Permission check (bypass if explicitly approved by user)
+        # Permission check via centralized PermissionManager
         if not is_approved:
-            check_permission(tool.permission, clean_name)
+            # check_execution_permission will raise ToolError if strictly blocked (e.g. friend mode)
+            # and will return False if explicit approval is needed.
+            is_auto_allowed = permission_manager.check_execution_permission(
+                tool=tool,
+                args=args,
+                project_path=project_path,
+                agent_mode=agent_mode,
+                network_enabled=network_enabled,
+            )
+            
+            if not is_auto_allowed:
+                logger.warn(
+                    "security.permission.approval_required",
+                    tool=clean_name,
+                    permission=tool.permission.value,
+                )
+                raise ToolError(
+                    ErrorCode.TOOL_PERMISSION_DENIED,
+                    f"Tool '{clean_name}' requires approval.",
+                    details={"permission": tool.permission.value, "requires_approval": True},
+                )
 
         # Path validation and normalization for file tools
         if "path" in args:
@@ -105,6 +129,8 @@ class ToolExecutor:
         project_path: str,
         agent_id: str | None = None,
         is_approved: bool = False,
+        agent_mode: AgentMode = AgentMode.WORK,
+        network_enabled: bool = True,
     ) -> dict[str, Any]:
         """
         Execute an OpenAI-format tool call (from Nemotron's response).
@@ -129,4 +155,6 @@ class ToolExecutor:
             project_path=project_path,
             agent_id=agent_id,
             is_approved=is_approved,
+            agent_mode=agent_mode,
+            network_enabled=network_enabled,
         )

@@ -49,6 +49,13 @@ SAFE_PREFIXES = [
 ]
 
 
+from enum import StrEnum
+
+class CommandClassification(StrEnum):
+    SAFE = "safe"
+    RISKY = "risky"
+    DESTRUCTIVE = "destructive"
+
 def validate_command(command: str) -> None:
     """
     Validate a shell command before execution.
@@ -66,8 +73,31 @@ def validate_command(command: str) -> None:
 
     logger.debug("security.command.allowed", command=command[:100])
 
+def classify_command(command: str) -> CommandClassification:
+    """Classify a command into SAFE, RISKY, or DESTRUCTIVE."""
+    cmd = command.strip().split()[0] if command.strip() else ""
+    if not cmd:
+        return CommandClassification.SAFE
+
+    if any(pattern.search(command) for pattern in BLOCKED_COMMANDS):
+        return CommandClassification.DESTRUCTIVE
+
+    # Potentially risky commands that need approval
+    risky_prefixes = ["rm", "mv", "cp", "kill", "pkill", "chmod", "chown", "apt", "apt-get", "yum", "dnf", "brew"]
+    if any(cmd.startswith(prefix) for prefix in risky_prefixes):
+        return CommandClassification.RISKY
+
+    # Network-related
+    network_commands = ["curl", "wget", "scp", "ssh", "ftp", "nc", "telnet"]
+    if any(cmd.startswith(prefix) for prefix in network_commands):
+        return CommandClassification.RISKY
+
+    if any(cmd.startswith(prefix) for prefix in SAFE_PREFIXES):
+        return CommandClassification.SAFE
+
+    # Unknown commands are considered risky by default
+    return CommandClassification.RISKY
 
 def is_safe_command(command: str) -> bool:
-    """Check if a command uses a known-safe prefix."""
-    cmd = command.strip().split()[0] if command.strip() else ""
-    return any(cmd.startswith(prefix) for prefix in SAFE_PREFIXES)
+    """Legacy check if a command uses a known-safe prefix."""
+    return classify_command(command) == CommandClassification.SAFE
