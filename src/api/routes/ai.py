@@ -91,6 +91,38 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     aid = gen_agent_id()
     sid = gen_session_id()
 
+    # Detect if it's a friendly chat
+    from src.ai.intent import intent_detector
+    from src.ai.provider import get_ai_provider
+
+    if await intent_detector.is_friendly_chat(request.query):
+        provider = get_ai_provider()
+        chat_messages = []
+        for msg in request.history:
+            chat_messages.append({"role": msg.role, "content": msg.content})
+        chat_messages.append({"role": "user", "content": request.query})
+        
+        try:
+            response = await provider.chat(messages=chat_messages)
+            
+            # Format as expected by the chat endpoint
+            history_out = [{"role": msg.role, "content": msg.content} for msg in request.history]
+            history_out.append({"role": "user", "content": request.query})
+            history_out.append({"role": "assistant", "content": response.content})
+            
+            return {
+                "status": "ok",
+                "response": response.content,
+                "agent_id": aid,
+                "files_changed": [],
+                "steps": 1,
+                "history": history_out,
+            }
+        except Exception as exc:
+            logger.error("api.ai.chat.friendly_error", error=str(exc))
+            # Fallback to normal flow if it fails
+
+
     # Ensure project is opened
     if project_manager.get_project(request.project_path) is None:
         await project_manager.open_project(request.project_path)

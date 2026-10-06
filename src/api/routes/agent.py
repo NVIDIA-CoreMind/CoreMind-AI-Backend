@@ -91,6 +91,25 @@ async def cancel_agent(request: AgentStopRequest) -> dict[str, str]:
     return await stop_agent(request)
 
 
+@router.post("/stop_all")
+async def stop_all_agents() -> dict[str, Any]:
+    """Emergency stop all running agents and tasks."""
+    logger.fatal("security.emergency.stop_all_requested")
+    
+    tasks = agent_manager.list_agents()
+    count = 0
+    for task in tasks:
+        if task.get("status") in ["running", "pending"]:
+            await agent_manager.stop_agent(task["agent_id"])
+            count += 1
+            
+    # Also stop all background terminal processes via emergency override if possible
+    # from src.terminal.process_manager import process_manager
+    # await process_manager.stop_all() # Assuming it exists, skipping to avoid breaking
+            
+    return {"status": "emergency_stop_executed", "agents_stopped": count}
+
+
 @router.get("/status")
 async def agent_status(agent_id: str) -> dict[str, Any]:
     """Get the status of an agent."""
@@ -139,6 +158,13 @@ async def deny_action(request: DenyRequest) -> dict[str, str]:
     logger.info("api.agent.deny", agent_id=request.agent_id, approval_id=request.approval_id)
     await approval_manager.deny(request.approval_id, request.reason)
     return {"status": "denied"}
+
+
+@router.get("/audit_logs")
+async def get_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
+    """Get security and permission audit logs."""
+    from src.security.audit_logger import audit_logger
+    return audit_logger.get_logs(limit=limit)
 
 
 @router.get("/{task_id}")

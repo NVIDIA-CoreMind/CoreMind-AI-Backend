@@ -40,6 +40,59 @@ class AgentManager:
         # Ensure project is opened
         if project_manager.get_project(project_path) is None:
             await project_manager.open_project(project_path)
+            
+        # Check if it's a friendly chat
+        from src.ai.intent import intent_detector
+        if await intent_detector.is_friendly_chat(task):
+            from src.ai.provider import get_ai_provider
+            from src.events.event_bus import event_bus
+            from src.events.events import CoreMindEvent
+            
+            provider = get_ai_provider()
+            chat_response = await provider.chat(messages=[{"role": "user", "content": task}])
+            
+            agent_task = AgentTask(
+                task_id=aid,
+                session_id=sid,
+                agent_id=aid,
+                task=task,
+                project_path=project_path,
+            )
+            agent_task.status = TaskStatus.COMPLETED
+            agent_task.completed_at = datetime.now(UTC)
+            agent_task.response = chat_response.content
+            
+            self._tasks[aid] = agent_task
+            
+            # Emit events so the UI can display the completion
+            await event_bus.publish(CoreMindEvent(
+                type="agent.started",
+                agent_id=aid,
+                session_id=sid,
+                timestamp=datetime.now(UTC).isoformat(),
+                data={"task": task, "project_path": project_path}
+            ))
+            
+            await event_bus.publish(CoreMindEvent(
+                type="agent.completed",
+                agent_id=aid,
+                session_id=sid,
+                timestamp=datetime.now(UTC).isoformat(),
+                data={
+                    "files_changed": [],
+                    "steps": 1,
+                    "change_id": None,
+                    "response": chat_response.content,
+                    "task_graph": {}
+                }
+            ))
+            
+            logger.info("agent.manager.friendly_chat", agent_id=aid, session_id=sid, task=task[:50])
+            return {
+                "agent_id": aid,
+                "session_id": sid,
+                "status": "completed",
+            }
 
         agent_task = AgentTask(
             task_id=aid,
