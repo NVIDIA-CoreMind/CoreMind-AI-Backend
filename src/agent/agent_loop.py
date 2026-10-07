@@ -288,12 +288,21 @@ class AgentLoop:
                     self._state.transition(AgentState.VERIFYING)
                 self._state.transition(AgentState.COMPLETED)
                 self._task.status = TaskStatus.COMPLETED
-                self._task.completed_at = datetime.now(UTC)
+                local_url = None
+                try:
+                    from src.terminal.web_server import ensure_project_web_server
+                    server_info = await ensure_project_web_server(self._task.project_path)
+                    if server_info:
+                        local_url = server_info.get("url")
+                except Exception:
+                    pass
+
                 await self._emit(EventType.AGENT_COMPLETED, {
                     "files_changed": self._task.files_changed,
                     "steps": self._task.steps_completed,
                     "task_graph": self._task.task_graph.to_dict(),
                     "change_id": self._change_set.change_id if self._change_set else None,
+                    "local_url": local_url,
                 })
             else:
                 if self._state.can_transition(AgentState.CANCELLED):

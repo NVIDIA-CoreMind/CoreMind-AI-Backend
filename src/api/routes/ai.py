@@ -220,6 +220,23 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
                 "action": "created" if line_cnt > 0 else "modified",
             })
 
+        # Check if project has a web entrypoint and ensure web server is running
+        local_url = None
+        try:
+            from src.terminal.web_server import ensure_project_web_server
+            server_info = await ensure_project_web_server(request.project_path)
+            if server_info:
+                local_url = server_info.get("url")
+        except Exception as ws_err:
+            logger.warn("api.ai.chat.web_server_warn", error=str(ws_err))
+
+        if local_url and local_url not in final_response:
+            final_response += (
+                f"\n\n---\n"
+                f"🌐 **Local Website Preview:** [{local_url}]({local_url})\n\n"
+                f"Your website is running live on local host and ready to view in your browser!"
+            )
+
         return {
             "status": "ok" if result.status.value == "completed" else "error",
             "response": final_response,
@@ -227,6 +244,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
             "files_changed": result.files_changed,
             "files_details": files_details,
             "steps": result.steps_completed,
+            "local_url": local_url,
             "history": messages[1:],  # Exclude system prompt
         }
     except Exception as exc:
