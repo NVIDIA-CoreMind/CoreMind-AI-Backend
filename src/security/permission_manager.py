@@ -92,6 +92,8 @@ class PermissionManager:
                 # Needs approval unless overridden by always allow
                 if self.tool_approvals.get("terminal") != ApprovalMode.ALWAYS_ALLOW:
                     return False
+            if classification == CommandClassification.SAFE:
+                return True
         
         # 4. Check global tool approval modes
         if tool_name in self.tool_approvals:

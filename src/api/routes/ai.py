@@ -11,6 +11,7 @@ POST /v1/ai/code   — High-quality code generation
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -120,6 +121,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
                 "response": response.content,
                 "agent_id": aid,
                 "files_changed": [],
+                "files_details": [],
                 "steps": 1,
                 "history": history_out,
             }
@@ -203,11 +205,27 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
         if result.error:
             final_response += f"\n\nError encountered: {result.error}"
 
+        files_details = []
+        for p_rel in result.files_changed:
+            target_f = Path(request.project_path) / p_rel
+            line_cnt = 0
+            if target_f.exists() and target_f.is_file():
+                try:
+                    line_cnt = len(target_f.read_text(encoding="utf-8", errors="ignore").splitlines())
+                except Exception:
+                    pass
+            files_details.append({
+                "file": p_rel,
+                "lines": line_cnt,
+                "action": "created" if line_cnt > 0 else "modified",
+            })
+
         return {
             "status": "ok" if result.status.value == "completed" else "error",
             "response": final_response,
             "agent_id": aid,
             "files_changed": result.files_changed,
+            "files_details": files_details,
             "steps": result.steps_completed,
             "history": messages[1:],  # Exclude system prompt
         }

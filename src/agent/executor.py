@@ -146,10 +146,20 @@ class AgentExecutor:
                 if tool_name in ("write_file", "edit_file", "patch_file"):
                     path = inner.get("path", "")
                     if path:
+                        lines_cnt = inner.get("lines")
+                        if lines_cnt is None:
+                            lines_cnt = inner.get("additions", 0)
                         await event_bus.emit(CoreMindEvent(
                             type=EventType.FILE_CHANGED,
                             agent_id=self._agent_id,
-                            data={"file": path, "action": inner.get("action", "modified")},
+                            data={
+                                "file": path,
+                                "action": inner.get("action", "modified"),
+                                "lines": lines_cnt,
+                                "additions": inner.get("additions", 0),
+                                "deletions": inner.get("deletions", 0),
+                                "size": inner.get("size", 0),
+                            },
                         ))
 
                         diff_str = inner.get("diff", "")

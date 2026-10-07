@@ -220,6 +220,7 @@ async def execute_edit_file(
         "diff": file_diff.diff,
         "additions": file_diff.additions,
         "deletions": file_diff.deletions,
+        "lines": updated.count("\n") + 1,
     }
 
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+from pathlib import Path
 """
 CoreMind Backend — Application Configuration.
 
@@ -5,7 +7,6 @@ Loads all settings from environment variables with Pydantic validation.
 NEBIUS_API_KEY is never exposed to logs or API responses.
 """
 
-from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     """All backend configuration — sourced from .env / environment."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
