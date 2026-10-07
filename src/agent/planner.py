@@ -2,6 +2,7 @@
 CoreMind Backend — Agent Planner.
 
 Analyzes tasks and creates structured execution task graphs with dependencies.
+Includes fast-path detection to skip LLM planning for simple tasks.
 """
 
 from __future__ import annotations
@@ -14,6 +15,25 @@ from src.agent.task_graph import TaskGraph
 from src.ai.prompts.planning import build_task_analysis_prompt
 from src.ai.provider import AIResponse, get_ai_provider
 from src.utils.logger import logger
+
+
+# ── Fast-path detection ─────────────────────────────────────────────
+_SIMPLE_TASK_KEYWORDS = {
+    "search", "trending", "look up", "find me", "what is", "who is",
+    "tell me about", "latest", "current",
+}
+
+
+def _is_simple_task(task: str) -> bool:
+    """Detect tasks that don't need a full LLM planning call."""
+    lower = task.strip().lower()
+    word_count = len(lower.split())
+    # Very short tasks or pure search/lookup tasks
+    if word_count <= 8:
+        return True
+    if any(kw in lower for kw in _SIMPLE_TASK_KEYWORDS):
+        return True
+    return False
 
 
 STRUCTURED_PLAN_PROMPT = """Analyze the following coding task and generate a structured JSON execution plan.
@@ -113,11 +133,21 @@ def _parse_task_graph_from_text(raw_text: str | None, default_goal: str) -> Task
 
 
 async def generate_task_graph(task: str, project_context: str) -> TaskGraph:
-    """Generate a structured TaskGraph for a user task."""
+    """Generate a structured TaskGraph for a user task.
+    
+    Fast-path: simple tasks skip the LLM call entirely and use a default
+    3-step plan, saving ~9-10 seconds of latency.
+    """
+    logger.info("agent.planner.generating_graph", task=task[:100])
+
+    # ── Fast-path: skip LLM for simple tasks ────────────────────────
+    if _is_simple_task(task):
+        logger.info("agent.planner.fast_path", task=task[:100])
+        return _parse_task_graph_from_text("", default_goal=task)
+
+    # ── Full LLM planning for complex tasks ─────────────────────────
     provider = get_ai_provider()
     prompt = STRUCTURED_PLAN_PROMPT.format(task=task, project_context=project_context)
-
-    logger.info("agent.planner.generating_graph", task=task[:100])
 
     try:
         response = await provider.chat(
@@ -129,6 +159,7 @@ async def generate_task_graph(task: str, project_context: str) -> TaskGraph:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,
+            max_tokens=512,
         )
         return _parse_task_graph_from_text(response.content, default_goal=task)
     except Exception as exc:

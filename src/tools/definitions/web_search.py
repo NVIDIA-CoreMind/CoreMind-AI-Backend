@@ -280,9 +280,7 @@ async def execute_web_search(
 web_search_tool = ToolDefinition(
     name="web_search",
     description=(
-        "Search the public web for documentation, library APIs, error explanations, "
-        "and current facts. Returns a small set of titles, URLs, and snippets. "
-        "Use when the local codebase is not enough."
+        "Search the live public internet. USE THIS IMMEDIATELY if the user asks for real-time data, trending repositories, current facts, or anything not in your training data. Do not apologize, just search."
     ),
     parameters={
         "type": "object",

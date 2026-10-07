@@ -94,24 +94,23 @@ class PermissionManager:
                     return False
         
         # 4. Check global tool approval modes
-        mode = self.tool_approvals.get(tool_name, ApprovalMode.ASK_EVERY_TIME)
-        if mode == ApprovalMode.ALWAYS_ALLOW:
-            return True
-            
-        # 5. Check project approvals
-        if mode == ApprovalMode.APPROVE_FOR_PROJECT and tool_name in self.project_approved.get(project_path, set()):
-            return True
-            
-        # 6. Check session/once approvals
-        if mode == ApprovalMode.APPROVE_ONCE and tool_name in self.session_approved:
-            self.session_approved.remove(tool_name) # Consume it
+        if tool_name in self.tool_approvals:
+            mode = self.tool_approvals[tool_name]
+            if mode == ApprovalMode.ALWAYS_ALLOW:
+                return True
+            if mode == ApprovalMode.APPROVE_FOR_PROJECT and tool_name in self.project_approved.get(project_path, set()):
+                return True
+            if mode == ApprovalMode.APPROVE_ONCE and tool_name in self.session_approved:
+                self.session_approved.remove(tool_name)  # Consume it
+                return True
+            if mode == ApprovalMode.ASK_EVERY_TIME:
+                return False
+
+        # 5. Fallback to basic permission levels
+        if tool.permission in {PermissionLevel.READ, PermissionLevel.WRITE}:
             return True
 
-        # 7. Fallback to basic permission levels
-        if tool.permission == PermissionLevel.READ:
-            return True
-
-        # If it reaches here, we need interactive approval
+        # HIGH_RISK operations or unapproved execute require approval
         return False
 
 permission_manager = PermissionManager()

@@ -91,19 +91,24 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     aid = gen_agent_id()
     sid = gen_session_id()
 
-    # Detect if it's a friendly chat
+    # Detect if it's a friendly chat — now instant (no LLM call)
     from src.ai.intent import intent_detector
     from src.ai.provider import get_ai_provider
 
     if await intent_detector.is_friendly_chat(request.query):
         provider = get_ai_provider()
-        chat_messages = []
+        chat_messages = [
+            {
+                "role": "system",
+                "content": "You are CoreMind AI, an ultra-fast, intelligent coding assistant. Provide clear, direct, and concise answers.",
+            }
+        ]
         for msg in request.history:
             chat_messages.append({"role": msg.role, "content": msg.content})
         chat_messages.append({"role": "user", "content": request.query})
         
         try:
-            response = await provider.chat(messages=chat_messages)
+            response = await provider.chat(messages=chat_messages, max_tokens=1024)
             
             # Format as expected by the chat endpoint
             history_out = [{"role": msg.role, "content": msg.content} for msg in request.history]
@@ -126,6 +131,39 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     # Ensure project is opened
     if project_manager.get_project(request.project_path) is None:
         await project_manager.open_project(request.project_path)
+
+    # --- AUTO-SEARCH: Run concurrently (non-blocking) ---
+    import asyncio
+
+    query_lower = request.query.lower()
+    search_task = None
+    if any(kw in query_lower for kw in ("search", "trending", "latest", "look up", "current", "github")):
+        from src.tools.definitions.web_search import execute_web_search
+
+        async def _do_search() -> str | None:
+            try:
+                logger.info("api.ai.chat.auto_search", query=request.query)
+                search_res = await execute_web_search(request.query, max_results=3)
+                if search_res and search_res.get("results"):
+                    extra = "\n\n[System Auto-Search Results Provided for Context]:\n"
+                    for r in search_res["results"]:
+                        extra += f"- {r.get('title')}: {r.get('snippet')} ({r.get('url')})\n"
+                    return extra
+            except Exception as e:
+                logger.warn("api.ai.chat.auto_search_failed", error=str(e))
+            return None
+
+        search_task = asyncio.create_task(_do_search())
+
+    # If search was started, await it (with a short timeout so it doesn't block forever)
+    if search_task is not None:
+        try:
+            search_extra = await asyncio.wait_for(search_task, timeout=5.0)
+            if search_extra:
+                request.query += search_extra
+        except asyncio.TimeoutError:
+            logger.warn("api.ai.chat.auto_search_timeout")
+    # --------------------------
 
     agent_task = AgentTask(
         task_id=aid,
