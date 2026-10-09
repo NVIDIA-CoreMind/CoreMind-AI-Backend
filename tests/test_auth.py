@@ -194,3 +194,86 @@ def test_api_auth_portal_ui(client: TestClient):
     assert "text/html" in res.headers["content-type"]
     assert "Welcome to Antigravity" in res.text
     assert "Continue with Google" in res.text
+
+
+def test_api_get_google_auth_url(client: TestClient):
+    """Test GET /v1/auth/google/url endpoint with default and custom params."""
+    # 1. Default request
+    res = client.get("/v1/auth/google/url")
+    assert res.status_code == 200
+    data = res.json()
+    assert "auth_url" in data
+    assert "client_id" in data
+    assert "state" in data
+    assert len(data["state"]) > 10
+    assert "http%3A%2F%2F127.0.0.1%3A43110%2Fv1%2Fauth%2Fgoogle%2Fcallback" in data["auth_url"] or "127.0.0.1" in data["auth_url"]
+    assert "accounts.google.com" in data["auth_url"]
+
+    # 2. Custom state and redirect URI
+    res_custom = client.get(
+        "/v1/auth/google/url",
+        params={"state": "custom-uuid-state", "redirect_uri": "http://127.0.0.1:43110/custom/callback"},
+    )
+    assert res_custom.status_code == 200
+    data_custom = res_custom.json()
+    assert data_custom["state"] == "custom-uuid-state"
+    assert "custom-uuid-state" in data_custom["auth_url"]
+    assert "custom%2Fcallback" in data_custom["auth_url"] or "custom/callback" in data_custom["auth_url"]
+
+
+def test_api_google_callback_and_session_polling(client: TestClient):
+    """Test Google callback and desktop session polling flow."""
+    test_state = "desktop-session-state-7788"
+
+    # 1. Polling before callback should return 404 pending
+    pending_res = client.get("/v1/auth/session", params={"state": test_state})
+    assert pending_res.status_code == 404
+    assert pending_res.json()["status"] == "pending"
+
+    mock_profile = {
+        "google_id": "google-desktop-user",
+        "email": "desktop.dev@gmail.com",
+        "name": "Desktop Dev",
+        "avatar_url": "https://lh3.googleusercontent.com/avatar_desktop.png",
+    }
+
+    with patch(
+        "src.auth.service.auth_service._verify_google_id_token", new_callable=AsyncMock
+    ) as mock_verify, patch(
+        "src.auth.service.auth_service._exchange_google_code", new_callable=AsyncMock
+    ) as mock_exchange:
+        mock_verify.return_value = mock_profile
+        mock_exchange.return_value = mock_profile
+
+        # 2. Google redirects back to callback after Chrome sign-in
+        cb_res = client.get(
+            "/v1/auth/google/callback",
+            params={"code": "sample_oauth_code", "state": test_state},
+        )
+        assert cb_res.status_code == 200
+        assert "text/html" in cb_res.headers["content-type"]
+        assert "Authentication Successful" in cb_res.text
+        assert "You can now close this tab and return to CoreMind IDE." in cb_res.text
+        assert "#0F172A" in cb_res.text  # Modern dark background styling
+
+        # 3. Desktop IDE polls /v1/auth/session?state=...
+        poll_res = client.get("/v1/auth/session", params={"state": test_state})
+        assert poll_res.status_code == 200
+        tokens = poll_res.json()
+        assert "access_token" in tokens
+        assert "refresh_token" in tokens
+        assert tokens["token_type"] == "Bearer"
+        assert tokens["expires_in"] > 0
+        assert tokens["user"]["email"] == "desktop.dev@gmail.com"
+        assert tokens["user"]["name"] == "Desktop Dev"
+        assert tokens["user"]["avatar_url"] == "https://lh3.googleusercontent.com/avatar_desktop.png"
+        assert tokens["user"]["provider"] == "google"
+
+
+def test_api_logout_endpoint(client: TestClient):
+    """Test POST /v1/auth/logout endpoint."""
+    res = client.post("/v1/auth/logout")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["message"] == "Successfully logged out"

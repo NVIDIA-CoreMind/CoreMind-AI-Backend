@@ -16,13 +16,20 @@ from src.agent.task_graph import TaskGraph
 
 
 class TaskStatus(StrEnum):
+    QUEUED = "queued"
+    ANALYZING = "analyzing"
+    PLANNING = "planning"
+    EXECUTING = "executing"
+    TESTING = "testing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    # Interactive & backward compatibility aliases
     CREATED = "created"
     RUNNING = "running"
     WAITING_FOR_APPROVAL = "waiting_for_approval"
     WAITING_FOR_USER = "waiting_for_user"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -34,7 +41,7 @@ class AgentTask:
     agent_id: str
     task: str
     project_path: str
-    status: TaskStatus = TaskStatus.CREATED
+    status: TaskStatus = TaskStatus.QUEUED
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
 
@@ -64,5 +71,7 @@ class AgentTask:
             "error": self.error,
             "response": self.response,
             "task_graph": self.task_graph.to_dict(),
+            "messages": self.messages,
         }
+
 

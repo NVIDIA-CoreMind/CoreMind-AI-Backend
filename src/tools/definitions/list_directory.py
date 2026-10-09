@@ -27,7 +27,10 @@ async def execute_list_directory(
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """List files and directories up to a given depth."""
-    target = Path(project_path) / path
+    from src.security.path_policy import validate_path
+
+    valid_rel_path = validate_path(path, project_path)
+    target = Path(project_path) / valid_rel_path
     root = Path(project_path)
 
     if not target.exists():
@@ -74,7 +77,7 @@ async def execute_list_directory(
     _walk(target, 1)
 
     return {
-        "path": path,
+        "path": valid_rel_path,
         "entries": entries,
         "total": len(entries),
         "truncated": len(entries) >= MAX_ENTRIES,
@@ -102,3 +105,26 @@ list_directory_tool = ToolDefinition(
     executor=execute_list_directory,
     timeout_ms=10_000,
 )
+
+list_files_tool = ToolDefinition(
+    name="list_files",
+    description="List files inside the authorized workspace with depth control.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative directory path inside workspace (default: '.')",
+            },
+            "max_depth": {
+                "type": "integer",
+                "description": "Maximum depth to inspect (default: 3)",
+            },
+        },
+        "required": [],
+    },
+    permission=PermissionLevel.READ,
+    executor=execute_list_directory,
+    timeout_ms=10_000,
+)
+

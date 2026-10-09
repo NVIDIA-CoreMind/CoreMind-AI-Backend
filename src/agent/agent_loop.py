@@ -61,13 +61,27 @@ class AgentLoop:
         set_active_task_graph(self._task.agent_id, self._task.task_graph)
         try:
             await self._emit(EventType.AGENT_STARTED, {"task": self._task.task[:200]})
-            self._task.status = TaskStatus.RUNNING
+            await self._set_task_status(TaskStatus.ANALYZING)
 
             # Step 1: Understand & Analyze Context
             self._state.transition(AgentState.ANALYZING)
             await self._emit(EventType.AGENT_THINKING, {"phase": "analyzing"})
 
+            # Load conversation history from prior tasks in same session if available
+            try:
+                from src.agent.storage import task_storage
+                prior_history = task_storage.get_conversation_history(self._task.session_id)
+                if prior_history:
+                    for msg in prior_history:
+                        if msg.get("role") == "user":
+                            self._context.add_user_message(msg.get("content", ""))
+                        elif msg.get("role") == "assistant":
+                            self._context.add_assistant_message(msg.get("content"), msg.get("tool_calls"))
+            except Exception as hist_err:
+                logger.debug("agent.loop.prior_history_load_err", error=str(hist_err))
+
             # Step 2: Create Structured Plan
+            await self._set_task_status(TaskStatus.PLANNING)
             self._state.transition(AgentState.PLANNING)
             await self._emit(EventType.AGENT_PLANNING, {"phase": "planning"})
 
@@ -102,9 +116,9 @@ class AgentLoop:
             self._executor.set_checkpoint(self._checkpoint)
             self._executor.set_change_set_id(self._change_set.change_id)
 
+            await self._set_task_status(TaskStatus.EXECUTING)
             self._state.transition(AgentState.EXECUTING)
             step = 0
-
 
             while step < settings.max_agent_steps and not self._stopped:
                 step += 1
@@ -174,7 +188,7 @@ class AgentLoop:
                     for tc in response.tool_calls:
                         func = tc.get("function", {})
                         name = func.get("name", "")
-                        if name in ("write_file", "edit_file", "patch_file"):
+                        if name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff", "delete_file"):
                             called_edit_tool = True
                             try:
                                 args = json.loads(func.get("arguments", "{}"))
@@ -184,9 +198,9 @@ class AgentLoop:
                                     self._context.record_file_changed(path)
                             except json.JSONDecodeError:
                                 pass
-                        elif name in ("list_directory", "read_file", "search_files", "git_status", "git_log"):
+                        elif name in ("list_directory", "list_files", "read_file", "search_files", "search_code", "git_status", "git_log", "inspect_git", "get_diagnostics"):
                             called_inspection_tool = True
-                        elif name in ("terminal", "sandbox_execute"):
+                        elif name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
                             called_execution_tool = True
 
                     # Progress task graph based on actions taken
@@ -270,52 +284,64 @@ class AgentLoop:
 
             # Step 4: Verification Loop
             if self._task.files_changed and not self._stopped:
+                await self._set_task_status(TaskStatus.TESTING)
                 verification = await self._run_verification_loop(max_retries=MAX_REPAIR_ATTEMPTS)
 
                 if not verification.success:
                     self._state.transition(AgentState.FAILED)
-                    self._task.status = TaskStatus.FAILED
                     self._task.error = f"Verification failed: {verification.error_summary[:500]}"
                     if self._checkpoint:
                         await checkpoint_manager.rollback(self._checkpoint)
+                    await self._set_task_status(TaskStatus.FAILED)
                     await self._emit(EventType.AGENT_FAILED, {"error": self._task.error})
                     await self._emit(EventType.AGENT_ERROR, {"error": self._task.error})
                     return self._task
 
             # Complete or Cancelled
+            self._task.messages = list(self._context._conversation)
             if not self._stopped:
                 if self._state.can_transition(AgentState.VERIFYING):
                     self._state.transition(AgentState.VERIFYING)
                 self._state.transition(AgentState.COMPLETED)
-                self._task.status = TaskStatus.COMPLETED
-                self._task.completed_at = datetime.now(UTC)
+                await self._set_task_status(TaskStatus.COMPLETED)
+                local_url = None
+                try:
+                    from src.terminal.web_server import ensure_project_web_server
+                    server_info = await ensure_project_web_server(self._task.project_path)
+                    if server_info:
+                        local_url = server_info.get("url")
+                except Exception:
+                    pass
+
                 await self._emit(EventType.AGENT_COMPLETED, {
                     "files_changed": self._task.files_changed,
                     "steps": self._task.steps_completed,
                     "task_graph": self._task.task_graph.to_dict(),
                     "change_id": self._change_set.change_id if self._change_set else None,
+                    "local_url": local_url,
                 })
             else:
                 if self._state.can_transition(AgentState.CANCELLED):
                     self._state.transition(AgentState.CANCELLED)
                 elif self._state.can_transition(AgentState.STOPPED):
                     self._state.transition(AgentState.STOPPED)
-                self._task.status = TaskStatus.CANCELLED
                 self._task.completed_at = datetime.now(UTC)
+                await self._set_task_status(TaskStatus.CANCELLED)
                 await self._emit(EventType.AGENT_STOPPED, {})
 
             return self._task
 
         except Exception as exc:
             logger.error("agent.loop.error", agent_id=self._task.agent_id, error=str(exc))
-            self._task.status = TaskStatus.FAILED
             self._task.error = str(exc)
             self._task.completed_at = datetime.now(UTC)
+            self._task.messages = list(self._context._conversation)
             if self._checkpoint:
                 try:
                     await checkpoint_manager.rollback(self._checkpoint)
                 except Exception:
                     pass
+            await self._set_task_status(TaskStatus.FAILED)
             await self._emit(EventType.AGENT_FAILED, {"error": str(exc)})
             await self._emit(EventType.AGENT_ERROR, {"error": str(exc)})
             return self._task
@@ -410,7 +436,35 @@ class AgentLoop:
                         result=r["content"],
                     )
 
+                # Track any files changed during repair
+                for tc in fix_response.tool_calls:
+                    func = tc.get("function", {})
+                    name = func.get("name", "")
+                    if name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff"):
+                        try:
+                            args = json.loads(func.get("arguments", "{}"))
+                            f_path = args.get("path") or args.get("file_path") or ""
+                            if f_path and f_path not in self._task.files_changed:
+                                self._task.files_changed.append(f_path)
+                                self._context.record_file_changed(f_path)
+                        except Exception:
+                            pass
+
         return last_result
+
+    async def _set_task_status(self, new_status: TaskStatus) -> None:
+        """Update task status, emit event, and persist to SQLite."""
+        self._task.status = new_status
+        await self._emit(EventType.TASK_STATUS, {
+            "status": new_status.value,
+            "task_id": self._task.task_id,
+            "agent_id": self._task.agent_id,
+        })
+        try:
+            from src.agent.storage import task_storage
+            task_storage.save_task(self._task.to_dict())
+        except Exception as e:
+            logger.warn("agent.loop.save_task_warn", error=str(e))
 
     def stop(self) -> None:
         """Signal the agent to stop."""
@@ -421,6 +475,7 @@ class AgentLoop:
         await event_bus.emit(CoreMindEvent(
             type=event_type,
             agent_id=self._task.agent_id,
+            task_id=self._task.task_id,
             session_id=self._task.session_id,
             data=data,
         ))

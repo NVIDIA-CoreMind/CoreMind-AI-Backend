@@ -1,3 +1,5 @@
+from __future__ import annotations
+from pathlib import Path
 """
 CoreMind Backend — Application Configuration.
 
@@ -5,7 +7,6 @@ Loads all settings from environment variables with Pydantic validation.
 NEBIUS_API_KEY is never exposed to logs or API responses.
 """
 
-from __future__ import annotations
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     """All backend configuration — sourced from .env / environment."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
         description="Nebius Token Factory base URL",
     )
     nebius_model: str = Field(
-        default="nvidia/Nemotron-3-Ultra-550b-a55b",
+        default="nvidia/Nemotron-3_5-Lightning",
         description="Default NVIDIA Nemotron model ID",
     )
 
@@ -91,8 +92,12 @@ class Settings(BaseSettings):
         description="Google OAuth Client Secret",
     )
     google_redirect_uri: str = Field(
-        default="http://localhost:43110/v1/auth/google/callback",
+        default="http://127.0.0.1:43110/v1/auth/google/callback",
         description="Google OAuth Redirect URI callback",
+    )
+    frontend_origin: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        description="Allowed frontend origins for CORS",
     )
 
     # ── Database ────────────────────────────────────────────────────

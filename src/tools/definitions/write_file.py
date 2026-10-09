@@ -24,11 +24,14 @@ async def execute_write_file(
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Write content to a file, creating parent directories if needed."""
+    from src.security.path_policy import validate_path
+
     target_rel_path = path or file_path
     if not target_rel_path:
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
 
-    file_obj = Path(project_path) / target_rel_path
+    valid_rel_path = validate_path(target_rel_path, project_path)
+    file_obj = Path(project_path) / valid_rel_path
     existed = file_obj.exists()
 
     if create_directories:
@@ -37,10 +40,10 @@ async def execute_write_file(
     file_obj.write_text(content, encoding="utf-8")
 
     action = "modified" if existed else "created"
-    logger.info("tools.write_file", path=target_rel_path, action=action, size=len(content))
+    logger.info("tools.write_file", path=valid_rel_path, action=action, size=len(content))
 
     return {
-        "path": target_rel_path,
+        "path": valid_rel_path,
         "action": action,
         "size": len(content),
         "lines": content.count("\n") + 1,
@@ -75,3 +78,30 @@ write_file_tool = ToolDefinition(
     executor=execute_write_file,
     timeout_ms=10_000,
 )
+
+create_file_tool = ToolDefinition(
+    name="create_file",
+    description="Create a new file or write file content with validated paths.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative path to the file from workspace root",
+            },
+            "content": {
+                "type": "string",
+                "description": "The full text content to write to the file",
+            },
+            "create_directories": {
+                "type": "boolean",
+                "description": "Create parent directories if they don't exist (default: true)",
+            },
+        },
+        "required": ["path", "content"],
+    },
+    permission=PermissionLevel.WRITE,
+    executor=execute_write_file,
+    timeout_ms=10_000,
+)
+

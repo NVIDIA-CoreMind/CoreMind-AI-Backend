@@ -109,6 +109,15 @@ class AIProvider(abc.ABC):
         """Get accumulated token usage statistics."""
         ...
 
+    def set_model(self, model: str) -> None:
+        """Dynamically configure the active model name."""
+        pass
+
+    def set_base_url(self, base_url: str) -> None:
+        """Dynamically configure the provider base URL endpoint."""
+        pass
+
+
 
 # ── Provider Factory ────────────────────────────────────────────────
 

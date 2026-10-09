@@ -167,6 +167,12 @@ async def get_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
     return audit_logger.get_logs(limit=limit)
 
 
+@router.post("/task", response_model=AgentRunResponse)
+async def create_agent_task(request: AgentRunRequest) -> AgentRunResponse:
+    """Create and start an agent task (alias for /run)."""
+    return await run_agent(request)
+
+
 @router.get("/{task_id}")
 async def get_agent_by_id(task_id: str) -> dict[str, Any]:
     """Get details for an agent task by ID."""
@@ -174,3 +180,83 @@ async def get_agent_by_id(task_id: str) -> dict[str, Any]:
     if status is None:
         raise HTTPException(status_code=404, detail=f"Agent task '{task_id}' not found")
     return status
+
+
+@router.get("/{task_id}/history")
+async def get_task_history(task_id: str) -> dict[str, Any]:
+    """Retrieve conversation messages and turn history for an agent task."""
+    task = agent_manager.get_status(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Agent task '{task_id}' not found")
+    messages = task.get("messages", [])
+    if not messages:
+        from src.agent.storage import task_storage
+        session_id = task.get("session_id", "")
+        if session_id:
+            messages = task_storage.get_conversation_history(session_id)
+    return {
+        "task_id": task_id,
+        "session_id": task.get("session_id"),
+        "status": task.get("status"),
+        "messages": messages,
+        "files_changed": task.get("files_changed", []),
+        "steps_completed": task.get("steps_completed", 0),
+        "tool_calls_count": task.get("tool_calls_count", 0),
+        "task_graph": task.get("task_graph", {}),
+    }
+
+
+@router.get("/{task_id}/events")
+@router.get("/{task_id}/stream")
+async def stream_agent_events(task_id: str) -> Any:
+    """Stream live agent events via Server-Sent Events (SSE)."""
+    import asyncio
+    from collections.abc import AsyncGenerator
+    from fastapi.responses import StreamingResponse
+    from src.events.event_bus import event_bus
+    from src.events.events import CoreMindEvent, EventType
+
+    queue = event_bus.subscribe()
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            status = agent_manager.get_status(task_id)
+            if status:
+                initial_event = CoreMindEvent(
+                    type=EventType.TASK_STATUS,
+                    agent_id=task_id,
+                    task_id=task_id,
+                    data={"status": status.get("status", "running")},
+                )
+                yield initial_event.to_sse()
+
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.0)
+                    if event.agent_id == task_id or event.task_id == task_id or not event.agent_id:
+                        yield event.to_sse()
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            event_bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.delete("/{task_id}")
+async def delete_agent_task(task_id: str) -> dict[str, Any]:
+    """Delete an agent task from database storage."""
+    from src.agent.storage import task_storage
+    deleted = task_storage.delete_task(task_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Agent task '{task_id}' not found")
+    return {"status": "deleted", "task_id": task_id}
+

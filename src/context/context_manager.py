@@ -106,12 +106,11 @@ class ContextManager:
 
         if user_task:
             self._user_task = user_task
+            # Ensure the user prompt is present in the conversation history
+            if not self._conversation or self._conversation[-1].get("content") != user_task:
+                self.add_user_message(user_task)
 
-        # Layer 6: User Task / Instructions
-        if self._user_task and (not self._conversation or self._conversation[0].get("role") != "user"):
-            messages.append({"role": "user", "content": self._user_task})
-
-        # Layer 7: Active Conversation & Tool Execution
+        # Layer 6: Active Conversation & Tool Execution
         messages.extend(self._conversation)
 
         # Compaction if token threshold reached

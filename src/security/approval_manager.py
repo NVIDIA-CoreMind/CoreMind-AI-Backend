@@ -91,7 +91,7 @@ class ApprovalManager:
 
         return approval
 
-    async def wait_for_decision(self, approval: ApprovalRequest, timeout: float = 300) -> bool:
+    async def wait_for_decision(self, approval: ApprovalRequest, timeout: float = 30) -> bool:
         """Wait for the user to approve or deny. Returns True if approved."""
         try:
             await asyncio.wait_for(approval._event.wait(), timeout=timeout)

@@ -118,6 +118,8 @@ async def execute_edit_file(
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Apply safe multi-strategy edit to a file."""
+    from src.security.path_policy import validate_path
+
     target_rel_path = path or file_path
     if not target_rel_path:
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
@@ -125,13 +127,14 @@ async def execute_edit_file(
     old_content = old_content if old_content is not None else target_content
     new_content = new_content if new_content is not None else replacement_content
 
-    file_obj = Path(project_path) / target_rel_path
+    valid_rel_path = validate_path(target_rel_path, project_path)
+    file_obj = Path(project_path) / valid_rel_path
 
     if not file_obj.exists():
-        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {target_rel_path}")
+        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {valid_rel_path}")
 
     if not file_obj.is_file():
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {target_rel_path}")
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {valid_rel_path}")
 
     try:
         original = file_obj.read_text(encoding="utf-8")
@@ -220,6 +223,7 @@ async def execute_edit_file(
         "diff": file_diff.diff,
         "additions": file_diff.additions,
         "deletions": file_diff.deletions,
+        "lines": updated.count("\n") + 1,
     }
 
 

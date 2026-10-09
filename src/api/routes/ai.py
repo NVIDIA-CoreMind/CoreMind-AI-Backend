@@ -11,9 +11,13 @@ POST /v1/ai/code   — High-quality code generation
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.ai.provider import get_ai_provider
@@ -77,6 +81,69 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
 
 
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """
+    Stream AI code generation and assistant responses via Server-Sent Events (SSE).
+    Unthrottled token streaming without artificial delays or rate limiting.
+    """
+    provider = get_ai_provider()
+    logger.info("api.ai.chat.stream", query=request.query[:50], history_len=len(request.history))
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are CoreMind AI, an ultra-fast, intelligent coding assistant and staff software engineer. "
+                "Provide direct, high-quality code and clear explanations."
+            ),
+        }
+    ]
+    for msg in request.history:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": request.query})
+
+    async def _event_generator() -> AsyncIterator[str]:
+        try:
+            from src.events.event_bus import event_bus
+            from src.events.events import CoreMindEvent, EventType
+
+            async for chunk in provider.stream(messages=messages):
+                if chunk.content:
+                    # Broadcast immediately via event bus for WebSocket subscribers
+                    await event_bus.emit(
+                        CoreMindEvent(
+                            type=EventType.AI_TOKEN,
+                            data={"token": chunk.content},
+                        )
+                    )
+                    # Yield unthrottled SSE chunk
+                    payload = json.dumps({
+                        "type": "token",
+                        "token": chunk.content,
+                        "content": chunk.content,
+                    })
+                    yield f"data: {payload}\n\n"
+
+            done_payload = json.dumps({"type": "done", "status": "completed"})
+            yield f"data: {done_payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            logger.error("api.ai.chat.stream_error", error=str(exc))
+            err_payload = json.dumps({"type": "error", "error": str(exc)})
+            yield f"data: {err_payload}\n\n"
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/chat")
 async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     """Chat with the AI, using the full AgentLoop for the best workflow planning and coding."""
@@ -91,19 +158,24 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     aid = gen_agent_id()
     sid = gen_session_id()
 
-    # Detect if it's a friendly chat
+    # Detect if it's a friendly chat — now instant (no LLM call)
     from src.ai.intent import intent_detector
     from src.ai.provider import get_ai_provider
 
     if await intent_detector.is_friendly_chat(request.query):
         provider = get_ai_provider()
-        chat_messages = []
+        chat_messages = [
+            {
+                "role": "system",
+                "content": "You are CoreMind AI, an ultra-fast, intelligent coding assistant. Provide clear, direct, and concise answers.",
+            }
+        ]
         for msg in request.history:
             chat_messages.append({"role": msg.role, "content": msg.content})
         chat_messages.append({"role": "user", "content": request.query})
         
         try:
-            response = await provider.chat(messages=chat_messages)
+            response = await provider.chat(messages=chat_messages, max_tokens=1024)
             
             # Format as expected by the chat endpoint
             history_out = [{"role": msg.role, "content": msg.content} for msg in request.history]
@@ -115,6 +187,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
                 "response": response.content,
                 "agent_id": aid,
                 "files_changed": [],
+                "files_details": [],
                 "steps": 1,
                 "history": history_out,
             }
@@ -126,6 +199,39 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     # Ensure project is opened
     if project_manager.get_project(request.project_path) is None:
         await project_manager.open_project(request.project_path)
+
+    # --- AUTO-SEARCH: Run concurrently (non-blocking) ---
+    import asyncio
+
+    query_lower = request.query.lower()
+    search_task = None
+    if any(kw in query_lower for kw in ("search", "trending", "latest", "look up", "current", "github")):
+        from src.tools.definitions.web_search import execute_web_search
+
+        async def _do_search() -> str | None:
+            try:
+                logger.info("api.ai.chat.auto_search", query=request.query)
+                search_res = await execute_web_search(request.query, max_results=3)
+                if search_res and search_res.get("results"):
+                    extra = "\n\n[System Auto-Search Results Provided for Context]:\n"
+                    for r in search_res["results"]:
+                        extra += f"- {r.get('title')}: {r.get('snippet')} ({r.get('url')})\n"
+                    return extra
+            except Exception as e:
+                logger.warn("api.ai.chat.auto_search_failed", error=str(e))
+            return None
+
+        search_task = asyncio.create_task(_do_search())
+
+    # If search was started, await it (with a short timeout so it doesn't block forever)
+    if search_task is not None:
+        try:
+            search_extra = await asyncio.wait_for(search_task, timeout=5.0)
+            if search_extra:
+                request.query += search_extra
+        except asyncio.TimeoutError:
+            logger.warn("api.ai.chat.auto_search_timeout")
+    # --------------------------
 
     agent_task = AgentTask(
         task_id=aid,
@@ -165,12 +271,46 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
         if result.error:
             final_response += f"\n\nError encountered: {result.error}"
 
+        files_details = []
+        for p_rel in result.files_changed:
+            target_f = Path(request.project_path) / p_rel
+            line_cnt = 0
+            if target_f.exists() and target_f.is_file():
+                try:
+                    line_cnt = len(target_f.read_text(encoding="utf-8", errors="ignore").splitlines())
+                except Exception:
+                    pass
+            files_details.append({
+                "file": p_rel,
+                "lines": line_cnt,
+                "action": "created" if line_cnt > 0 else "modified",
+            })
+
+        # Check if project has a web entrypoint and ensure web server is running
+        local_url = None
+        try:
+            from src.terminal.web_server import ensure_project_web_server
+            server_info = await ensure_project_web_server(request.project_path)
+            if server_info:
+                local_url = server_info.get("url")
+        except Exception as ws_err:
+            logger.warn("api.ai.chat.web_server_warn", error=str(ws_err))
+
+        if local_url and local_url not in final_response:
+            final_response += (
+                f"\n\n---\n"
+                f"🌐 **Local Website Preview:** [{local_url}]({local_url})\n\n"
+                f"Your website is running live on local host and ready to view in your browser!"
+            )
+
         return {
             "status": "ok" if result.status.value == "completed" else "error",
             "response": final_response,
             "agent_id": aid,
             "files_changed": result.files_changed,
+            "files_details": files_details,
             "steps": result.steps_completed,
+            "local_url": local_url,
             "history": messages[1:],  # Exclude system prompt
         }
     except Exception as exc:

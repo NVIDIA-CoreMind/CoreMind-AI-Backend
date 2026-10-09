@@ -30,6 +30,7 @@ class EventType(StrEnum):
     PLAN_CREATED = "plan.created"
     TASK_STARTED = "task.started"
     TASK_COMPLETED = "task.completed"
+    TASK_STATUS = "task.status"
 
     # Tool events
     TOOL_STARTED = "tool.started"
@@ -70,15 +71,25 @@ class EventType(StrEnum):
 
 
 class CoreMindEvent(BaseModel):
-    """A single event to stream to the IDE."""
+    """A versioned event to stream to the IDE."""
 
+    version: str = "1.0"
     type: EventType
     agent_id: str | None = None
+    task_id: str | None = None
     session_id: str | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     data: dict[str, Any] = Field(default_factory=dict)
 
+    def model_post_init(self, __context: Any) -> None:
+        """Sync task_id and agent_id."""
+        if self.agent_id and not self.task_id:
+            self.task_id = self.agent_id
+        elif self.task_id and not self.agent_id:
+            self.agent_id = self.task_id
+
     def to_sse(self) -> str:
         """Serialize to Server-Sent Events format."""
         payload = self.model_dump_json()
-        return f"data: {payload}\n\n"
+        return f"event: {self.type.value}\ndata: {payload}\n\n"
+
