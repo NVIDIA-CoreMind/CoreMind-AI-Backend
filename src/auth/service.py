@@ -68,7 +68,7 @@ class AuthService:
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
-            token_type="bearer",
+            token_type="Bearer",
             expires_in=expires_in,
             user=user_resp,
         )
@@ -78,14 +78,14 @@ class AuthService:
     ) -> GoogleAuthUrlResponse:
         """Construct the Google OAuth2 consent authorization URL."""
         client_id = settings.google_client_id or "coremind-google-client-id"
-        redirect = redirect_uri or settings.google_redirect_uri
-        state_str = state or secrets.token_urlsafe(16)
+        redirect = redirect_uri or settings.google_redirect_uri or "http://127.0.0.1:43110/v1/auth/google/callback"
+        state_str = state or str(uuid4())
 
         params = {
             "client_id": client_id,
             "redirect_uri": redirect,
             "response_type": "code",
-            "scope": "openid email profile",
+            "scope": "openid profile email",
             "access_type": "offline",
             "include_granted_scopes": "true",
             "prompt": "select_account",
@@ -226,7 +226,7 @@ class AuthService:
         google_id = profile["google_id"]
         email = profile["email"]
         name = profile["name"]
-        avatar_url = profile["avatar_url"]
+        avatar_url = profile.get("avatar_url")
         now = self._now_iso()
 
         user = self.storage.get_by_google_id(google_id)
@@ -235,7 +235,7 @@ class AuthService:
             user = self.storage.get_by_email(email)
             if user is not None:
                 user.google_id = google_id
-                if not user.avatar_url and avatar_url:
+                if avatar_url:
                     user.avatar_url = avatar_url
                 user.updated_at = now
                 user.last_login_at = now
@@ -244,7 +244,7 @@ class AuthService:
 
         if user is None:
             user = User(
-                id=str(uuid4()),
+                id=f"usr_{uuid4().hex[:12]}",
                 email=email,
                 name=name,
                 avatar_url=avatar_url,
@@ -259,6 +259,9 @@ class AuthService:
             self.storage.create_user(user)
             logger.info("auth.google.new_user_created", user_id=user.id, email=email)
         else:
+            if avatar_url and user.avatar_url != avatar_url:
+                user.avatar_url = avatar_url
+                self.storage.update_user(user)
             self.storage.update_last_login(user.id, now)
             user.last_login_at = now
 

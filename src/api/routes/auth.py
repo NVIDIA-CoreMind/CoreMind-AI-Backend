@@ -13,12 +13,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import get_current_user, get_optional_user
 from src.auth.models import (
     GoogleAuthRequest,
     GoogleAuthUrlResponse,
@@ -33,7 +35,53 @@ from src.utils.logger import logger
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
-_pending_sessions: dict[str, Any] = {}
+
+class OAuthSessionCache:
+    """Thread-safe TTL cache for pending OAuth sessions (5-10 minutes validity)."""
+
+    def __init__(self, default_ttl_seconds: int = 600) -> None:
+        self._default_ttl = default_ttl_seconds
+        self._lock = threading.Lock()
+        self._store: dict[str, tuple[dict[str, Any], float]] = {}
+
+    def set(self, key: str, value: dict[str, Any], ttl_seconds: int | None = None) -> None:
+        ttl = ttl_seconds if ttl_seconds is not None else self._default_ttl
+        expire_at = time.time() + ttl
+        with self._lock:
+            self._cleanup_expired()
+            self._store[key] = (value, expire_at)
+
+    def get(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            self._cleanup_expired()
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            val, expire_at = entry
+            if time.time() > expire_at:
+                del self._store[key]
+                return None
+            return val
+
+    def pop(self, key: str) -> dict[str, Any] | None:
+        with self._lock:
+            self._cleanup_expired()
+            entry = self._store.pop(key, None)
+            if entry is None:
+                return None
+            val, expire_at = entry
+            if time.time() > expire_at:
+                return None
+            return val
+
+    def _cleanup_expired(self) -> None:
+        now = time.time()
+        expired = [k for k, (_, exp) in self._store.items() if now > exp]
+        for k in expired:
+            del self._store[k]
+
+
+oauth_session_store = OAuthSessionCache()
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -63,96 +111,83 @@ async def google_callback(
     state: str | None = Query(default=None),
 ) -> Any:
     """
-    Handle Google OAuth callback redirect.
-    Exchanges code for tokens and renders a success message with token for the client.
+    Handle Google OAuth callback redirect after Chrome sign-in.
+    Exchanges code for tokens, persists profile/avatar, caches session for desktop polling,
+    and returns a clean confirmation page.
     """
     if error:
         logger.error("api.auth.google.callback_error", error=error)
         html = (
             "<!DOCTYPE html><html><head><title>Google Sign-In Error</title></head>"
-            "<body style='background:#0a0a0f;color:#ff5555;font-family:sans-serif;"
-            "text-align:center;padding:40px;'>"
-            f"<h2>Authentication Failed</h2><p>{error}</p>"
-            "<a href='/auth' style='color:#00ffaa;'>Back to Sign In</a></body></html>"
+            "<body style='background:#0F172A;color:#EF4444;font-family:sans-serif;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'>"
+            "<div style='text-align:center;background:#1E293B;padding:40px;border-radius:16px;border:1px solid #334155;'>"
+            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Failed</h2><p style='color:#94A3B8;'>{error}</p>"
+            "<a href='/auth' style='color:#3B82F6;'>Return to Sign In</a></div></body></html>"
         )
         return HTMLResponse(html, status_code=400)
 
     if not code:
-        return JSONResponse({"error": "No code provided by Google"}, status_code=400)
+        return JSONResponse({"error": "No authorization code provided by Google"}, status_code=400)
 
     try:
         token_response = await auth_service.google_auth(GoogleAuthRequest(code=code))
         token_json = token_response.model_dump_json()
         token_dict = token_response.model_dump()
+
+        # Cache session keyed by state for 5-10 minutes so the desktop IDE can retrieve it
         if state:
-            _pending_sessions[state] = token_dict
-        _pending_sessions["latest"] = token_dict
+            oauth_session_store.set(state, token_dict, ttl_seconds=600)
+        oauth_session_store.set("latest", token_dict, ttl_seconds=600)
+
         html = f"""<!DOCTYPE html>
 <html>
-<head>
-    <title>CoreMind — Authenticated</title>
-    <style>
-        body {{
-            background: #0d0f17; color: #f0f3f6;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex; align-items: center; justify-content: center;
-            height: 100vh; margin: 0;
-        }}
-        .card {{
-            background: #161b26; border: 1px solid #30363d; border-radius: 12px;
-            padding: 32px; max-width: 420px; text-align: center;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }}
-        .success-icon {{ font-size: 48px; color: #3b82f6; margin-bottom: 12px; }}
-        .btn {{
-            display: inline-block; margin-top: 20px; padding: 10px 24px;
-            background: linear-gradient(135deg, #3b82f6, #60a5fa);
-            color: #000; font-weight: 600; text-decoration: none; border-radius: 8px;
-        }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="success-icon">✓</div>
-        <h2>Welcome, {token_response.user.name}!</h2>
-        <p>Google sign-in successful: <strong>{token_response.user.email}</strong></p>
-        <p style="font-size:12px; color:#8b949e;">You may close this window or return.</p>
-        <a class="btn" href="coremind://auth" style="background: linear-gradient(135deg, #3b82f6, #60a5fa); color: #fff;">Open CoreMind IDE</a>
+  <head><title>CoreMind IDE — Sign-in Complete</title></head>
+  <body style="font-family: sans-serif; background: #0F172A; color: #F8FAFC; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+    <div style="text-align: center; background: #1E293B; padding: 40px; border-radius: 16px; border: 1px solid #334155; max-width: 440px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);">
+      <h2 style="color: #3B82F6; margin-bottom: 8px;">Authentication Successful</h2>
+      <p style="color: #94A3B8;">You can now close this tab and return to CoreMind IDE.</p>
     </div>
     <script>
-        if (window.opener) {{
-            window.opener.postMessage({{
-                type: 'COREMIND_AUTH_SUCCESS',
-                token: {token_json}
-            }}, '*');
-        }}
+      if (window.opener) {{
         try {{
-            localStorage.setItem('coremind_auth', JSON.stringify({token_json}));
+          window.opener.postMessage({{
+            type: 'COREMIND_AUTH_SUCCESS',
+            token: {token_json}
+          }}, '*');
         }} catch (e) {{}}
+      }}
+      try {{
+        localStorage.setItem('coremind_auth', JSON.stringify({token_json}));
+      }} catch (e) {{}}
     </script>
-</body>
+  </body>
 </html>"""
         return HTMLResponse(html)
     except Exception as exc:
         logger.error("api.auth.google.callback_exchange_failed", error=str(exc))
         err_html = (
             "<!DOCTYPE html><html><head><title>Authentication Error</title></head>"
-            "<body style='background:#0a0a0f;color:#ff5555;font-family:sans-serif;"
-            "text-align:center;padding:40px;'>"
-            f"<h2>Authentication Error</h2><p>{exc}</p>"
-            "<a href='/auth' style='color:#00ffaa;'>Back to Sign In</a></body></html>"
+            "<body style='background:#0F172A;color:#EF4444;font-family:sans-serif;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'>"
+            "<div style='text-align:center;background:#1E293B;padding:40px;border-radius:16px;border:1px solid #334155;'>"
+            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Error</h2><p style='color:#94A3B8;'>{exc}</p>"
+            "<a href='/auth' style='color:#3B82F6;'>Return to Sign In</a></div></body></html>"
         )
         return HTMLResponse(err_html, status_code=400)
 
 
-@router.get("/session")
-async def get_pending_session(state: str | None = Query(default=None)) -> Any:
-    """Poll for completed OAuth session from Google Chrome login."""
+@router.get("/session", response_model=TokenResponse)
+async def get_session(state: str | None = Query(default=None)) -> Any:
+    """
+    Desktop polling endpoint to check if Google sign-in finished in Chrome.
+    Returns AuthTokens schema if authenticated, or 404 pending status.
+    """
     key = state or "latest"
-    session = _pending_sessions.get(key)
-    if session:
-        return session
-    return JSONResponse({"status": "pending"}, status_code=202)
+    session_data = oauth_session_store.get(key)
+    if session_data:
+        return TokenResponse(**session_data)
+    return JSONResponse({"status": "pending"}, status_code=404)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -189,8 +224,9 @@ async def refresh_token(req: RefreshTokenRequest) -> TokenResponse:
 
 @router.post("/logout")
 async def logout(
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: Annotated[User | None, Depends(get_optional_user)] = None,
 ) -> dict[str, str]:
     """Logout current user and invalidate client credentials."""
-    logger.info("api.auth.logout", user_id=current_user.id)
-    return {"status": "ok", "message": "Successfully logged out."}
+    if current_user:
+        logger.info("api.auth.logout", user_id=current_user.id)
+    return {"status": "ok", "message": "Successfully logged out"}

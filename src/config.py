@@ -92,8 +92,12 @@ class Settings(BaseSettings):
         description="Google OAuth Client Secret",
     )
     google_redirect_uri: str = Field(
-        default="http://localhost:43110/v1/auth/google/callback",
+        default="http://127.0.0.1:43110/v1/auth/google/callback",
         description="Google OAuth Redirect URI callback",
+    )
+    frontend_origin: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        description="Allowed frontend origins for CORS",
     )
 
     # ── Database ────────────────────────────────────────────────────

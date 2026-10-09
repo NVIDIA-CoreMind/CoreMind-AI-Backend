@@ -11,10 +11,13 @@ POST /v1/ai/code   — High-quality code generation
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.ai.provider import get_ai_provider
@@ -76,6 +79,69 @@ class ChatRequest(BaseModel):
     query: str
     project_path: str = Field(default=".")
     history: list[ChatMessage] = Field(default_factory=list)
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """
+    Stream AI code generation and assistant responses via Server-Sent Events (SSE).
+    Unthrottled token streaming without artificial delays or rate limiting.
+    """
+    provider = get_ai_provider()
+    logger.info("api.ai.chat.stream", query=request.query[:50], history_len=len(request.history))
+
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are CoreMind AI, an ultra-fast, intelligent coding assistant and staff software engineer. "
+                "Provide direct, high-quality code and clear explanations."
+            ),
+        }
+    ]
+    for msg in request.history:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": request.query})
+
+    async def _event_generator() -> AsyncIterator[str]:
+        try:
+            from src.events.event_bus import event_bus
+            from src.events.events import CoreMindEvent, EventType
+
+            async for chunk in provider.stream(messages=messages):
+                if chunk.content:
+                    # Broadcast immediately via event bus for WebSocket subscribers
+                    await event_bus.emit(
+                        CoreMindEvent(
+                            type=EventType.AI_TOKEN,
+                            data={"token": chunk.content},
+                        )
+                    )
+                    # Yield unthrottled SSE chunk
+                    payload = json.dumps({
+                        "type": "token",
+                        "token": chunk.content,
+                        "content": chunk.content,
+                    })
+                    yield f"data: {payload}\n\n"
+
+            done_payload = json.dumps({"type": "done", "status": "completed"})
+            yield f"data: {done_payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            logger.error("api.ai.chat.stream_error", error=str(exc))
+            err_payload = json.dumps({"type": "error", "error": str(exc)})
+            yield f"data: {err_payload}\n\n"
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/chat")

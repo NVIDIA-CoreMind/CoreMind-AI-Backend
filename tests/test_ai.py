@@ -80,3 +80,26 @@ class TestAiApiEndpoints:
             assert res.status_code == 200
             data = res.json()
             assert data["usage"]["total_tokens"] == 100
+
+    def test_ai_chat_stream_endpoint(self, client: TestClient) -> None:
+        async def mock_stream_gen(*args: Any, **kwargs: Any):
+            yield AIStreamChunk(content="Hello ")
+            yield AIStreamChunk(content="from ")
+            yield AIStreamChunk(content="CoreMind!")
+
+        with patch("src.api.routes.ai.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.name = "nebius"
+            mock_provider.stream = mock_stream_gen
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post(
+                "/v1/ai/chat/stream",
+                json={"query": "Hello", "project_path": "."},
+            )
+            assert res.status_code == 200
+            assert "text/event-stream" in res.headers["content-type"]
+            body = res.text
+            assert "Hello " in body
+            assert "CoreMind!" in body
+            assert "[DONE]" in body

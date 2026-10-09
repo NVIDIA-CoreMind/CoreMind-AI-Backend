@@ -41,10 +41,20 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── CORS — allow the Electron IDE renderer ──────────────────────
+    # ── CORS — allow Electron IDE renderer, local origins, and Chrome ───
+    origins = [
+        o.strip()
+        for o in settings.frontend_origin.split(",")
+        if o.strip()
+    ]
+    for o in ["null", "http://localhost:5173", "http://127.0.0.1:5173"]:
+        if o not in origins:
+            origins.append(o)
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=origins,
+        allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|null|app://.*|vscode-file://.*|file://.*)$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
