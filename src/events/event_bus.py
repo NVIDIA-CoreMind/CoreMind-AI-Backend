@@ -81,6 +81,9 @@ class EventBus:
             except asyncio.QueueFull:
                 logger.warn("event.queue_full", event_type=event.type.value)
 
+    # Alias for emit
+    publish = emit
+
     def clear(self) -> None:
         """Remove all handlers and queues."""
         self._handlers.clear()

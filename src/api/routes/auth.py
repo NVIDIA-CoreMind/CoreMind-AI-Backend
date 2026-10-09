@@ -33,6 +33,8 @@ from src.utils.logger import logger
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
+_pending_sessions: dict[str, Any] = {}
+
 
 @router.post("/google", response_model=TokenResponse)
 async def google_auth(req: GoogleAuthRequest) -> TokenResponse:
@@ -81,6 +83,10 @@ async def google_callback(
     try:
         token_response = await auth_service.google_auth(GoogleAuthRequest(code=code))
         token_json = token_response.model_dump_json()
+        token_dict = token_response.model_dump()
+        if state:
+            _pending_sessions[state] = token_dict
+        _pending_sessions["latest"] = token_dict
         html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -97,10 +103,10 @@ async def google_callback(
             padding: 32px; max-width: 420px; text-align: center;
             box-shadow: 0 8px 32px rgba(0,0,0,0.5);
         }}
-        .success-icon {{ font-size: 48px; color: #10b981; margin-bottom: 12px; }}
+        .success-icon {{ font-size: 48px; color: #3b82f6; margin-bottom: 12px; }}
         .btn {{
             display: inline-block; margin-top: 20px; padding: 10px 24px;
-            background: linear-gradient(135deg, #10b981, #06b6d4);
+            background: linear-gradient(135deg, #3b82f6, #60a5fa);
             color: #000; font-weight: 600; text-decoration: none; border-radius: 8px;
         }}
     </style>
@@ -111,7 +117,7 @@ async def google_callback(
         <h2>Welcome, {token_response.user.name}!</h2>
         <p>Google sign-in successful: <strong>{token_response.user.email}</strong></p>
         <p style="font-size:12px; color:#8b949e;">You may close this window or return.</p>
-        <a class="btn" href="/auth">Open CoreMind Portal</a>
+        <a class="btn" href="coremind://auth" style="background: linear-gradient(135deg, #3b82f6, #60a5fa); color: #fff;">Open CoreMind IDE</a>
     </div>
     <script>
         if (window.opener) {{
@@ -137,6 +143,16 @@ async def google_callback(
             "<a href='/auth' style='color:#00ffaa;'>Back to Sign In</a></body></html>"
         )
         return HTMLResponse(err_html, status_code=400)
+
+
+@router.get("/session")
+async def get_pending_session(state: str | None = Query(default=None)) -> Any:
+    """Poll for completed OAuth session from Google Chrome login."""
+    key = state or "latest"
+    session = _pending_sessions.get(key)
+    if session:
+        return session
+    return JSONResponse({"status": "pending"}, status_code=202)
 
 
 @router.get("/me", response_model=UserResponse)
