@@ -97,14 +97,15 @@ def validate_path(file_path: str, project_path: str) -> str:
     Validate that a file path is within the project root.
     Returns the cleaned relative path if valid.
 
-    Raises ToolError if the path escapes the project directory.
+    Raises ToolError if the path escapes the project directory or resolves via symlink outside.
     """
     try:
         norm_path = normalize_project_path(file_path, project_path)
         project_root = Path(project_path).resolve()
-        target = (project_root / norm_path).resolve()
+        raw_target = project_root / norm_path
+        target = raw_target.resolve()
 
-        # Check directory traversal
+        # Check directory traversal & symlink escape
         if not target.is_relative_to(project_root):
             logger.error(
                 "security.path.traversal_blocked",
@@ -113,12 +114,21 @@ def validate_path(file_path: str, project_path: str) -> str:
             )
             raise ToolError(
                 ErrorCode.TOOL_INVALID_PATH,
-                f"Path escapes project directory: {file_path}",
+                f"Path escapes project directory or resolves outside workspace: {file_path}",
             )
 
-        # Check blocked paths
+        # Explicitly check for symlink pointing outside
+        if raw_target.is_symlink() or any(p.is_symlink() for p in raw_target.parents if p != project_root):
+            if not target.is_relative_to(project_root):
+                logger.error("security.path.symlink_escape_blocked", path=file_path)
+                raise ToolError(
+                    ErrorCode.TOOL_INVALID_PATH,
+                    f"Symlink escape blocked: '{file_path}' resolves outside project directory",
+                )
+
+        # Check blocked paths (both relative path and filename)
         rel_path = str(target.relative_to(project_root))
-        if rel_path in BLOCKED_PATHS:
+        if rel_path in BLOCKED_PATHS or target.name in BLOCKED_PATHS or any(part in BLOCKED_PATHS for part in target.parts):
             logger.error("security.path.blocked", path=rel_path)
             raise ToolError(
                 ErrorCode.TOOL_PERMISSION_DENIED,

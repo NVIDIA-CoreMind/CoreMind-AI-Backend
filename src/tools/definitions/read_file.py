@@ -43,17 +43,20 @@ async def execute_read_file(
     Read file contents, supporting line numbering, range selection,
     and safeguards against large/binary files.
     """
+    from src.security.path_policy import validate_path
+
     target_rel_path = path or file_path
     if not target_rel_path:
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, "Missing required argument 'path' or 'file_path'")
 
-    file_obj = Path(project_path) / target_rel_path
+    valid_rel_path = validate_path(target_rel_path, project_path)
+    file_obj = Path(project_path) / valid_rel_path
 
     if not file_obj.exists():
-        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {target_rel_path}")
+        raise ToolError(ErrorCode.TOOL_FILE_NOT_FOUND, f"File not found: {valid_rel_path}")
 
     if not file_obj.is_file():
-        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {target_rel_path}")
+        raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Not a file: {valid_rel_path}")
 
     stat = file_obj.stat()
     if stat.st_size > MAX_FILE_SIZE:

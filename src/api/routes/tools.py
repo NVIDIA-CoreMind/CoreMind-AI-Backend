@@ -87,3 +87,81 @@ async def edit_file(request: ToolRequest) -> dict[str, Any]:
         project_path=request.project_path,
     )
     return result
+
+
+@router.post("/diff")
+async def apply_diff_endpoint(request: ToolRequest) -> dict[str, Any]:
+    """Apply a unified diff directly to a file."""
+    logger.info("api.tools.apply_diff", project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name="apply_diff",
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.post("/tests")
+async def run_tests_endpoint(request: ToolRequest) -> dict[str, Any]:
+    """Run tests for the project."""
+    logger.info("api.tools.run_tests", project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name="run_tests",
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.post("/build")
+async def run_build_endpoint(request: ToolRequest) -> dict[str, Any]:
+    """Run project build command."""
+    logger.info("api.tools.run_build", project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name="run_build",
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.post("/diagnostics")
+async def get_diagnostics_endpoint(request: ToolRequest) -> dict[str, Any]:
+    """Retrieve diagnostics for a file or workspace."""
+    logger.info("api.tools.get_diagnostics", project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name="get_diagnostics",
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.post("/execute")
+async def execute_tool_endpoint(request: ToolRequest) -> dict[str, Any]:
+    """Execute any schema-validated tool by name."""
+    logger.info("api.tools.execute", tool=request.tool, project=request.project_path)
+    result = await tool_executor.execute(
+        tool_name=request.tool,
+        args=request.args,
+        project_path=request.project_path,
+    )
+    return result
+
+
+@router.get("/list")
+async def list_available_tools() -> list[dict[str, Any]]:
+    """List all registered tools with schemas and permissions."""
+    from src.tools.registry import tool_registry
+    return [
+        {
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+            "permission": t.permission.value,
+            "timeout_ms": t.timeout_ms,
+            "requires_approval": t.requires_approval,
+        }
+        for t in tool_registry.list_tools()
+    ]
+

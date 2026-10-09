@@ -84,6 +84,11 @@ class NebiusProvider(AIProvider):
                             "arguments": tc.function.arguments,
                         },
                     })
+            elif message.content and tools:
+                # Fallback structured parsing for models without native tool calling
+                from src.ai.parser import extract_structured_tool_calls
+                known = {t.get("function", {}).get("name") for t in tools if isinstance(t, dict)}
+                tool_calls = extract_structured_tool_calls(message.content, known_tools=known)
 
             # Track usage
             usage: dict[str, int] = {}
@@ -158,6 +163,20 @@ class NebiusProvider(AIProvider):
             logger.error("ai.nebius.list_models_error", error=str(exc))
             return []
 
+    def set_model(self, model: str) -> None:
+        """Dynamically configure the active model name."""
+        self._model = model
+        logger.info("ai.nebius.model_updated", model=model)
+
+    def set_base_url(self, base_url: str) -> None:
+        """Dynamically configure the provider base URL endpoint."""
+        self._client = AsyncOpenAI(
+            api_key=settings.nebius_api_key or "mock-nebius-key",
+            base_url=base_url,
+        )
+        logger.info("ai.nebius.base_url_updated", base_url=base_url)
+
     def get_usage(self) -> dict[str, Any]:
         """Get accumulated usage stats."""
         return self._usage.to_dict()
+

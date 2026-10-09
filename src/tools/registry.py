@@ -56,21 +56,27 @@ class ToolDefinition:
 
 
 TOOL_ALIASES: dict[str, str] = {
-    "execute_command": "terminal",
-    "run_command": "terminal",
-    "bash": "terminal",
-    "sh": "terminal",
-    "shell": "terminal",
-    "terminal_run": "terminal",
-    "list_files": "list_directory",
-    "list_dir": "list_directory",
+    "execute_command": "run_terminal",
+    "run_command": "run_terminal",
+    "bash": "run_terminal",
+    "sh": "run_terminal",
+    "shell": "run_terminal",
+    "terminal_run": "run_terminal",
+    "list_dir": "list_files",
     "view_file": "read_file",
-    "create_file": "write_file",
     "modify_file": "edit_file",
-    "apply_patch": "patch_file",
-    "search": "search_files",
-    "grep": "search_files",
-    "find_files": "search_files",
+    "apply_patch": "apply_diff",
+    "search": "search_code",
+    "grep": "search_code",
+    "find_files": "search_code",
+    "git": "inspect_git",
+    "test": "run_tests",
+    "tests": "run_tests",
+    "build": "run_build",
+    "diagnostics": "get_diagnostics",
+    "lint": "get_diagnostics",
+    "remove_file": "delete_file",
+    "rm": "delete_file",
 }
 
 
@@ -90,7 +96,7 @@ class ToolRegistry:
     def get(self, name: str) -> ToolDefinition:
         """Get a tool by name. Supports aliases. Raises ToolError if not found."""
         canonical = TOOL_ALIASES.get(name, name)
-        tool = self._tools.get(canonical)
+        tool = self._tools.get(canonical) or self._tools.get(name)
         if tool is None:
             raise ToolError(ErrorCode.TOOL_NOT_FOUND, f"Tool not found: {name}")
         return tool
@@ -154,39 +160,58 @@ tool_registry = DefaultToolRegistry()
 def _register_all_tools(target: ToolRegistry) -> None:
     """Register all built-in tool definitions."""
     from src.tools.definitions.ask_question import ask_question_tool
+    from src.tools.definitions.delete_file import delete_file_tool
     from src.tools.definitions.edit_file import edit_file_tool
-
-    from src.tools.definitions.git import git_diff_tool, git_log_tool, git_status_tool
-    from src.tools.definitions.list_directory import list_directory_tool
+    from src.tools.definitions.flutter import flutter_check_env_tool
+    from src.tools.definitions.get_diagnostics import get_diagnostics_tool
+    from src.tools.definitions.git import (
+        git_diff_tool,
+        git_log_tool,
+        git_status_tool,
+        inspect_git_tool,
+    )
+    from src.tools.definitions.list_directory import list_directory_tool, list_files_tool
     from src.tools.definitions.memory import (
         memory_forget_tool,
         memory_recall_tool,
         memory_save_tool,
     )
-    from src.tools.definitions.patch_file import patch_file_tool
+    from src.tools.definitions.patch_file import apply_diff_tool, patch_file_tool
     from src.tools.definitions.read_file import read_file_tool
+    from src.tools.definitions.run_build import run_build_tool
+    from src.tools.definitions.run_tests import run_tests_tool
     from src.tools.definitions.sandbox import sandbox_execute_tool
-    from src.tools.definitions.search_files import search_files_tool
+    from src.tools.definitions.search_files import search_code_tool, search_files_tool
     from src.tools.definitions.tasks import create_task_tool, update_task_tool
-    from src.tools.definitions.terminal import terminal_tool
+    from src.tools.definitions.terminal import run_terminal_tool, terminal_tool
     from src.tools.definitions.web_search import web_search_tool
-    from src.tools.definitions.write_file import write_file_tool
-    from src.tools.definitions.flutter import flutter_check_env_tool
+    from src.tools.definitions.write_file import create_file_tool, write_file_tool
 
+    # All CoreMind Workspace Tools
     for tool in [
-        read_file_tool,
-        search_files_tool,
+        list_files_tool,
         list_directory_tool,
+        read_file_tool,
+        search_code_tool,
+        search_files_tool,
+        create_file_tool,
         write_file_tool,
         edit_file_tool,
+        apply_diff_tool,
         patch_file_tool,
-        create_task_tool,
-        update_task_tool,
-        ask_question_tool,
+        delete_file_tool,
+        run_terminal_tool,
         terminal_tool,
+        run_tests_tool,
+        run_build_tool,
+        get_diagnostics_tool,
+        inspect_git_tool,
         git_status_tool,
         git_diff_tool,
         git_log_tool,
+        create_task_tool,
+        update_task_tool,
+        ask_question_tool,
         sandbox_execute_tool,
         web_search_tool,
         memory_save_tool,
@@ -197,4 +222,5 @@ def _register_all_tools(target: ToolRegistry) -> None:
         target.register(tool)
 
     logger.info("tools.registry.initialized", count=len(target._tools))
+
 

@@ -80,29 +80,30 @@ class AgentExecutor:
                 canonical_name = tool_def.name
 
                 # Check command validation
-                if canonical_name in ("terminal", "sandbox_execute"):
-                    command = args.get("command", "")
-                    validate_command(command)
-                    await event_bus.emit(CoreMindEvent(
-                        type=EventType.COMMAND_STARTED,
-                        agent_id=self._agent_id,
-                        data={"command": command},
-                    ))
+                if canonical_name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
+                    command = args.get("command") or args.get("test_command") or args.get("build_command") or ""
+                    if command:
+                        validate_command(command)
+                        await event_bus.emit(CoreMindEvent(
+                            type=EventType.COMMAND_STARTED,
+                            agent_id=self._agent_id,
+                            data={"command": command},
+                        ))
 
                 # Checkpoint backup before file modification
-                if canonical_name in ("write_file", "edit_file", "patch_file") and self._checkpoint:
+                if canonical_name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff", "delete_file") and self._checkpoint:
                     file_target = args.get("path", "")
                     if file_target:
                         checkpoint_manager.record_file_before_edit(self._checkpoint, file_target)
 
                 # Check if tool requires approval
-                needs_approval = requires_approval(tool_def.permission)
+                needs_approval = requires_approval(tool_def.permission) or canonical_name == "delete_file"
 
                 # Dynamically require approval for unsafe terminal commands
-                if canonical_name in ("terminal", "sandbox_execute"):
+                if canonical_name in ("terminal", "run_terminal", "sandbox_execute"):
                     from src.security.command_policy import is_safe_command
                     command = args.get("command", "")
-                    if not is_safe_command(command):
+                    if command and not is_safe_command(command):
                         needs_approval = True
 
                 is_approved = False
@@ -146,7 +147,7 @@ class AgentExecutor:
                     ))
 
                 # Track file changes and emit diffs
-                if canonical_name in ("write_file", "edit_file", "patch_file"):
+                if canonical_name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff"):
                     path = inner.get("path", "")
                     if path:
                         lines_cnt = inner.get("lines")
@@ -157,15 +158,15 @@ class AgentExecutor:
                         # If newly created, emit file.created immediately for snappy IDE response
                         if action == "created":
                             await event_bus.emit(CoreMindEvent(
-                                type=EventType.FILE_CREATED,
-                                agent_id=self._agent_id,
-                                data={
-                                    "file": path,
-                                    "path": path,
-                                    "action": "created",
-                                    "lines": lines_cnt,
-                                    "size": inner.get("size", 0),
-                                },
+                                 type=EventType.FILE_CREATED,
+                                 agent_id=self._agent_id,
+                                 data={
+                                     "file": path,
+                                     "path": path,
+                                     "action": "created",
+                                     "lines": lines_cnt,
+                                     "size": inner.get("size", 0),
+                                 },
                             ))
 
                         await event_bus.emit(CoreMindEvent(
@@ -219,7 +220,16 @@ class AgentExecutor:
                                 f"Automatic validation detected an issue after edit: {validation_err}"
                             )
 
-                if canonical_name in ("terminal", "sandbox_execute"):
+                elif canonical_name == "delete_file":
+                    path = inner.get("path", "")
+                    if path:
+                        await event_bus.emit(CoreMindEvent(
+                            type=EventType.FILE_DELETED,
+                            agent_id=self._agent_id,
+                            data={"file": path, "path": path, "action": "deleted"},
+                        ))
+
+                if canonical_name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
                     await event_bus.emit(CoreMindEvent(
                         type=EventType.COMMAND_COMPLETED,
                         agent_id=self._agent_id,

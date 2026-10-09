@@ -72,3 +72,34 @@ search_files_tool = ToolDefinition(
     executor=execute_search_files,
     timeout_ms=30_000,
 )
+
+search_code_tool = ToolDefinition(
+    name="search_code",
+    description="Search code and relevant symbols across the workspace.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Code string, regex pattern, or symbol name to search for",
+            },
+            "file_pattern": {
+                "type": "string",
+                "description": "Optional glob pattern to filter files (e.g. '*.py', '*.ts')",
+            },
+            "is_regex": {
+                "type": "boolean",
+                "description": "Whether query should be evaluated as regex (default: false)",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return (default: 30)",
+            },
+        },
+        "required": ["query"],
+    },
+    permission=PermissionLevel.READ,
+    executor=execute_search_files,
+    timeout_ms=30_000,
+)
+

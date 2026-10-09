@@ -172,3 +172,30 @@ terminal_tool = ToolDefinition(
     executor=execute_terminal,
     timeout_ms=120_000,
 )
+
+run_terminal_tool = ToolDefinition(
+    name="run_terminal",
+    description="Execute an approved shell command in the workspace directory.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "The shell command to execute",
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "description": "Optional command execution timeout in milliseconds (default: 120000)",
+            },
+            "is_background": {
+                "type": "boolean",
+                "description": "Whether command should run in the background (default: false)",
+            },
+        },
+        "required": ["command"],
+    },
+    permission=PermissionLevel.EXECUTE,
+    executor=execute_terminal,
+    timeout_ms=120_000,
+)
+

@@ -41,6 +41,8 @@ class AgentManager:
         if project_manager.get_project(project_path) is None:
             await project_manager.open_project(project_path)
 
+        from src.agent.storage import task_storage
+
         # Check if it's a friendly chat
         from src.ai.intent import intent_detector
         if await intent_detector.is_friendly_chat(task):
@@ -61,13 +63,19 @@ class AgentManager:
             agent_task.status = TaskStatus.COMPLETED
             agent_task.completed_at = datetime.now(UTC)
             agent_task.response = chat_response.content
+            agent_task.messages = [
+                {"role": "user", "content": task},
+                {"role": "assistant", "content": chat_response.content},
+            ]
 
             self._tasks[aid] = agent_task
+            task_storage.save_task(agent_task.to_dict())
 
             # Emit events so the UI can display the completion
             await event_bus.emit(CoreMindEvent(
                 type=EventType.AGENT_STARTED,
                 agent_id=aid,
+                task_id=aid,
                 session_id=sid,
                 data={"task": task, "project_path": project_path}
             ))
@@ -75,6 +83,7 @@ class AgentManager:
             await event_bus.emit(CoreMindEvent(
                 type=EventType.AGENT_COMPLETED,
                 agent_id=aid,
+                task_id=aid,
                 session_id=sid,
                 data={
                     "files_changed": [],
@@ -99,6 +108,7 @@ class AgentManager:
             task=task,
             project_path=project_path,
         )
+        task_storage.save_task(agent_task.to_dict())
 
         agent_loop = AgentLoop(agent_task)
         self._agents[aid] = agent_loop
@@ -118,6 +128,7 @@ class AgentManager:
 
     async def _run_agent(self, agent_id: str, loop: AgentLoop) -> AgentTask:
         """Run the agent loop and handle completion."""
+        from src.agent.storage import task_storage
         try:
             result = await loop.run()
             logger.info(
@@ -126,6 +137,7 @@ class AgentManager:
                 status=result.status.value,
                 steps=result.steps_completed,
             )
+            task_storage.save_task(result.to_dict())
             return result
         except Exception as exc:
             logger.error("agent.manager.error", agent_id=agent_id, error=str(exc))
@@ -134,14 +146,22 @@ class AgentManager:
                 task.status = TaskStatus.FAILED
                 task.error = str(exc)
                 task.completed_at = datetime.now(UTC)
+                task_storage.save_task(task.to_dict())
             raise
         finally:
             self._running_tasks.pop(agent_id, None)
 
     async def stop_agent(self, agent_id: str) -> bool:
         """Stop a running agent."""
+        from src.agent.storage import task_storage
         loop = self._agents.get(agent_id)
         if loop is None:
+            # Check if recorded in persistent storage
+            persisted = task_storage.get_task(agent_id)
+            if persisted:
+                persisted["status"] = TaskStatus.CANCELLED.value
+                task_storage.save_task(persisted)
+                return True
             return False
 
         loop.stop()
@@ -155,6 +175,7 @@ class AgentManager:
         if task:
             task.status = TaskStatus.CANCELLED
             task.completed_at = datetime.now(UTC)
+            task_storage.save_task(task.to_dict())
 
         logger.info("agent.manager.stopped", agent_id=agent_id)
         return True
@@ -162,10 +183,16 @@ class AgentManager:
     def get_status(self, agent_id: str) -> dict[str, Any] | None:
         """Get the status of an agent."""
         task = self._tasks.get(agent_id)
-        if task is None:
-            return None
-        return task.to_dict()
+        if task is not None:
+            return task.to_dict()
+        from src.agent.storage import task_storage
+        return task_storage.get_task(agent_id)
 
     def list_agents(self) -> list[dict[str, Any]]:
-        """List all agents and their statuses."""
-        return [task.to_dict() for task in self._tasks.values()]
+        """List all agents and their statuses (active + persisted)."""
+        from src.agent.storage import task_storage
+        persisted_tasks = {t["agent_id"]: t for t in task_storage.list_tasks(limit=100)}
+        for t in self._tasks.values():
+            persisted_tasks[t.agent_id] = t.to_dict()
+        return list(persisted_tasks.values())
+
