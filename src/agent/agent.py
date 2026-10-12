@@ -139,6 +139,14 @@ class AgentManager:
             )
             task_storage.save_task(result.to_dict())
             return result
+        except asyncio.CancelledError:
+            logger.info("agent.manager.cancelled", agent_id=agent_id)
+            task = self._tasks.get(agent_id)
+            if task:
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = datetime.now(UTC)
+                task_storage.save_task(task.to_dict())
+            raise
         except Exception as exc:
             logger.error("agent.manager.error", agent_id=agent_id, error=str(exc))
             task = self._tasks.get(agent_id)

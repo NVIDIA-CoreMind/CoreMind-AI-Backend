@@ -35,7 +35,27 @@ def compress_tool_output(
     """
     Compress large outputs (such as build or test logs) to focus on errors,
     failures, and critical summary lines.
+
+    Preserves code inspection tools (read_file, search_files, list_directory, edit_file)
+    intact so syntax and JSON structures are never corrupted.
     """
+    # Do not mangle file reading, directory listing, or file editing outputs
+    file_inspection_tools = {
+        "read_file",
+        "search_files",
+        "search_code",
+        "list_directory",
+        "list_files",
+        "edit_file",
+        "write_file",
+        "create_file",
+        "patch_file",
+        "apply_diff",
+        "get_diagnostics",
+    }
+    if tool_name in file_inspection_tools:
+        return raw_output
+
     if len(raw_output) <= max_chars and raw_output.count("\n") <= max_lines:
         return raw_output
 

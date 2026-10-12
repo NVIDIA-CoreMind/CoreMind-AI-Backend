@@ -90,7 +90,15 @@ class NebiusProvider(AIProvider):
             # Sanitize messages: ensure assistant messages with tool_calls have content: None when empty
             sanitized_messages: list[dict[str, Any]] = []
             for msg in messages:
-                m = dict(msg)
+                if isinstance(msg, dict):
+                    m = dict(msg)
+                elif hasattr(msg, 'to_dict'):
+                    m = msg.to_dict()
+                elif hasattr(msg, '__dataclass_fields__'):
+                    from dataclasses import asdict
+                    m = asdict(msg)
+                else:
+                    m = {'role': getattr(msg, 'role', 'user'), 'content': getattr(msg, 'content', '')}
                 if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
                     m["content"] = None
                 sanitized_messages.append(m)
@@ -182,7 +190,15 @@ class NebiusProvider(AIProvider):
         try:
             sanitized_messages: list[dict[str, Any]] = []
             for msg in messages:
-                m = dict(msg)
+                if isinstance(msg, dict):
+                    m = dict(msg)
+                elif hasattr(msg, 'to_dict'):
+                    m = msg.to_dict()
+                elif hasattr(msg, '__dataclass_fields__'):
+                    from dataclasses import asdict
+                    m = asdict(msg)
+                else:
+                    m = {'role': getattr(msg, 'role', 'user'), 'content': getattr(msg, 'content', '')}
                 if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
                     m["content"] = None
                 sanitized_messages.append(m)

@@ -56,9 +56,8 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket) -> None:
-    """WebSocket endpoint for IDE ↔ Backend streaming."""
+async def _handle_client_connection(websocket: WebSocket, client_id: str = "default") -> None:
+    """Core WebSocket connection lifecycle for IDE ↔ Backend streaming."""
     await ws_manager.connect(websocket)
 
     # Subscribe to all events and forward to this connection
@@ -81,14 +80,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             data = await websocket.receive_text()
             try:
                 message = json.loads(data)
-                msg_type = message.get("type", "")
-                logger.debug("websocket.message_received", msg_type=msg_type)
+                # Reconcile: support both 'type' and 'action' formats
+                msg_type = message.get("type") or message.get("action", "")
+                logger.debug("websocket.message_received", msg_type=msg_type, client_id=client_id)
 
-                # Handle IDE → Backend messages
-                if msg_type == "agent.approve":
+                # 1. Approvals
+                if msg_type in ("agent.approve", "human.approval"):
                     from src.security.approval_manager import approval_manager
 
-                    await approval_manager.approve(message.get("approval_id", ""))
+                    is_approved = message.get("approved", True)
+                    appr_id = message.get("approval_id", "")
+                    if is_approved:
+                        await approval_manager.approve(appr_id)
+                    else:
+                        await approval_manager.deny(appr_id, message.get("reason", "User denied"))
+
                 elif msg_type == "agent.deny":
                     from src.security.approval_manager import approval_manager
 
@@ -96,13 +102,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         message.get("approval_id", ""),
                         message.get("reason", "User denied"),
                     )
-                elif msg_type in ("agent.question_answer", "agent.question"):
+
+                # 2. Interactive Questions
+                elif msg_type in ("agent.question_answer", "agent.question", "human.question_response"):
                     from src.tools.definitions.ask_question import question_manager
 
-                    question_manager.answer_question(
-                        message.get("question_id", ""),
-                        message.get("answer", ""),
-                    )
+                    q_id = message.get("question_id", "")
+                    ans = message.get("answer") or message.get("response", "")
+                    question_manager.answer_question(q_id, ans)
+
+                # 3. Stop / Cancel
+                elif msg_type in ("agent.stop", "agent.cancel"):
+                    from src.api.routes.agent import agent_manager
+
+                    target_id = message.get("agent_id") or message.get("task_id", "")
+                    if target_id:
+                        await agent_manager.stop_agent(target_id)
 
             except json.JSONDecodeError:
                 logger.warn("websocket.invalid_json")
@@ -112,3 +127,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         forward_task.cancel()
         event_bus.unsubscribe(queue)
         ws_manager.disconnect(websocket)
+
+
+@router.websocket("/ws")
+async def websocket_root_endpoint(websocket: WebSocket) -> None:
+    """WebSocket endpoint at /ws."""
+    await _handle_client_connection(websocket, client_id="root")
+
+
+@router.websocket("/ws/{client_id}")
+async def websocket_client_endpoint(websocket: WebSocket, client_id: str) -> None:
+    """WebSocket endpoint at /ws/{client_id}."""
+    await _handle_client_connection(websocket, client_id=client_id)
+

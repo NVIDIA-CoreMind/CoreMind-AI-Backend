@@ -84,11 +84,19 @@ class CoreMindEvent(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
     def model_post_init(self, __context: Any) -> None:
-        """Sync task_id and agent_id."""
+        """Sync task_id and agent_id and mirror into data."""
         if self.agent_id and not self.task_id:
             self.task_id = self.agent_id
         elif self.task_id and not self.agent_id:
             self.agent_id = self.task_id
+
+        # Guarantee frontend filtering never drops events by mirroring identifiers into data
+        if self.agent_id and "agent_id" not in self.data:
+            self.data["agent_id"] = self.agent_id
+        if self.task_id and "task_id" not in self.data:
+            self.data["task_id"] = self.task_id
+        if self.session_id and "session_id" not in self.data:
+            self.data["session_id"] = self.session_id
 
     def to_sse(self) -> str:
         """Serialize to Server-Sent Events format."""

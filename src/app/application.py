@@ -103,7 +103,7 @@ def create_app() -> FastAPI:
         return HTMLResponse(content=get_auth_portal_html(), status_code=200)
 
     # ── Register route modules ──────────────────────────────────────
-    from src.api.routes.agent import router as agent_router
+    from src.api.routes.agent import router as agent_router, api_router as agent_api_router, bare_router as agent_bare_router
     from src.api.routes.ai import router as ai_router
     from src.api.routes.auth import router as auth_router
     from src.api.routes.changes import router as changes_router
@@ -117,6 +117,8 @@ def create_app() -> FastAPI:
     # Mount v1 API routes
     app.include_router(auth_router)
     app.include_router(agent_router)
+    app.include_router(agent_api_router)
+    app.include_router(agent_bare_router, include_in_schema=False)
     app.include_router(ai_router)
     app.include_router(project_router)
     app.include_router(tools_router)
@@ -125,9 +127,9 @@ def create_app() -> FastAPI:
     app.include_router(changes_router)
     app.include_router(terminal_router)
     app.include_router(ws_router)
+    app.include_router(ws_router, prefix="/v1", include_in_schema=False)
 
     # Mount convenient aliases without /v1 prefix for desktop client flexibility
-    app.include_router(agent_router, prefix="", include_in_schema=False)
     app.include_router(project_router, prefix="", include_in_schema=False)
     app.include_router(changes_router, prefix="", include_in_schema=False)
     app.include_router(terminal_router, prefix="", include_in_schema=False)
