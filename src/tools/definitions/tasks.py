@@ -53,9 +53,13 @@ async def execute_create_task(
         priority=priority,
     )
     if agent_id:
+        sess_id = _kwargs.get("session_id")
+        t_id = _kwargs.get("agent_task_id") or agent_id
         await event_bus.emit(CoreMindEvent(
             type=EventType.PLAN_CREATED,
             agent_id=agent_id,
+            session_id=sess_id,
+            task_id=t_id,
             data={"goal": graph.goal, "tasks": graph.to_dict()["tasks"]},
         ))
     return {"status": "created", "task": node.to_dict()}
@@ -88,16 +92,22 @@ async def execute_update_task(
         raise ToolError(ErrorCode.TOOL_INVALID_ARGS, f"Task '{task_id}' not found in task graph.")
 
     if agent_id:
+        sess_id = _kwargs.get("session_id")
+        t_id = _kwargs.get("agent_task_id") or agent_id
         if node_status == TaskNodeStatus.COMPLETED:
             await event_bus.emit(CoreMindEvent(
                 type=EventType.TASK_COMPLETED,
                 agent_id=agent_id,
+                session_id=sess_id,
+                task_id=t_id,
                 data={"task_id": task_id, "title": node.title, "status": "completed", "result": result},
             ))
         elif node_status == TaskNodeStatus.IN_PROGRESS:
             await event_bus.emit(CoreMindEvent(
                 type=EventType.TASK_STARTED,
                 agent_id=agent_id,
+                session_id=sess_id,
+                task_id=t_id,
                 data={"task_id": task_id, "title": node.title},
             ))
 

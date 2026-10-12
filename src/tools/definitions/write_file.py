@@ -24,6 +24,7 @@ async def execute_write_file(
     **_kwargs: Any,
 ) -> dict[str, Any]:
     """Write content to a file, creating parent directories if needed."""
+    from src.changes.diff import create_file_diff
     from src.security.path_policy import validate_path
 
     target_rel_path = path or file_path
@@ -33,12 +34,19 @@ async def execute_write_file(
     valid_rel_path = validate_path(target_rel_path, project_path)
     file_obj = Path(project_path) / valid_rel_path
     existed = file_obj.exists()
+    old_content = ""
+    if existed:
+        try:
+            old_content = file_obj.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
     if create_directories:
         file_obj.parent.mkdir(parents=True, exist_ok=True)
 
     file_obj.write_text(content, encoding="utf-8")
 
+    file_diff = create_file_diff(old_content, content, valid_rel_path)
     action = "modified" if existed else "created"
     logger.info("tools.write_file", path=valid_rel_path, action=action, size=len(content))
 
@@ -47,6 +55,9 @@ async def execute_write_file(
         "action": action,
         "size": len(content),
         "lines": content.count("\n") + 1,
+        "diff": file_diff.diff,
+        "additions": file_diff.additions,
+        "deletions": file_diff.deletions,
     }
 
 

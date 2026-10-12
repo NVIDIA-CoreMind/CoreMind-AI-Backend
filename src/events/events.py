@@ -34,7 +34,9 @@ class EventType(StrEnum):
 
     # Tool events
     TOOL_STARTED = "tool.started"
+    TOOL_OUTPUT = "tool.output"
     TOOL_COMPLETED = "tool.completed"
+    TOOL_FAILED = "tool.failed"
 
     # Approval events
     APPROVAL_REQUIRED = "agent.approval.required"

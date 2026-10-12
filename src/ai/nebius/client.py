@@ -22,22 +22,53 @@ from src.config import settings
 from src.utils.logger import logger
 
 
+def _create_openai_client(api_key: str, base_url: str) -> AsyncOpenAI:
+    import httpx
+    try:
+        import ssl
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        http_client = httpx.AsyncClient(verify=ssl_ctx)
+    except Exception:
+        http_client = None
+
+    return AsyncOpenAI(
+        api_key=api_key or "mock-nebius-key",
+        base_url=base_url,
+        http_client=http_client,
+    )
+
+
 class NebiusProvider(AIProvider):
     """AI provider backed by Nebius Token Factory → NVIDIA Nemotron."""
 
     def __init__(self) -> None:
-        self._client = AsyncOpenAI(
-            api_key=settings.nebius_api_key or "mock-nebius-key",
-            base_url=settings.nebius_base_url,
-        )
+        self._base_url = settings.nebius_base_url
+        self._client: AsyncOpenAI | None = None
+        self._loop: Any = None
         self._model = settings.nebius_model
         self._usage = UsageTracker()
 
         logger.info(
             "ai.nebius.initialized",
-            base_url=settings.nebius_base_url,
+            base_url=self._base_url,
             model=self._model,
         )
+
+    def _get_client(self) -> AsyncOpenAI:
+        import asyncio
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._client is None or self._loop is None or self._loop != current_loop or self._loop.is_closed():
+            self._loop = current_loop
+            self._client = _create_openai_client(
+                api_key=settings.nebius_api_key,
+                base_url=self._base_url,
+            )
+        return self._client
 
     @property
     def name(self) -> str:
@@ -56,9 +87,17 @@ class NebiusProvider(AIProvider):
     ) -> AIResponse:
         """Send a chat completion to Nebius/Nemotron."""
         try:
+            # Sanitize messages: ensure assistant messages with tool_calls have content: None when empty
+            sanitized_messages: list[dict[str, Any]] = []
+            for msg in messages:
+                m = dict(msg)
+                if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
+                    m["content"] = None
+                sanitized_messages.append(m)
+
             kwargs: dict[str, Any] = {
                 "model": self._model,
-                "messages": messages,
+                "messages": sanitized_messages,
                 "temperature": temperature,
             }
             if tools:
@@ -67,7 +106,18 @@ class NebiusProvider(AIProvider):
             if max_tokens:
                 kwargs["max_tokens"] = max_tokens
 
-            response = await self._client.chat.completions.create(**kwargs)
+            client = self._get_client()
+            response = await client.chat.completions.create(**kwargs)
+
+            if not response.choices:
+                return AIResponse(
+                    content="",
+                    tool_calls=[],
+                    finish_reason="stop",
+                    usage={},
+                    model=response.model or self._model,
+                    raw=response.model_dump() if hasattr(response, "model_dump") else {},
+                )
 
             choice = response.choices[0]
             message = choice.message
@@ -104,6 +154,7 @@ class NebiusProvider(AIProvider):
                 "ai.nebius.chat_completed",
                 model=self._model,
                 finish_reason=choice.finish_reason or "",
+                tool_calls_count=len(tool_calls),
                 **usage,
             )
 
@@ -129,9 +180,16 @@ class NebiusProvider(AIProvider):
     ) -> AsyncIterator[AIStreamChunk]:
         """Stream a chat completion from Nebius/Nemotron."""
         try:
+            sanitized_messages: list[dict[str, Any]] = []
+            for msg in messages:
+                m = dict(msg)
+                if m.get("role") == "assistant" and m.get("tool_calls") and not m.get("content"):
+                    m["content"] = None
+                sanitized_messages.append(m)
+
             kwargs: dict[str, Any] = {
                 "model": self._model,
-                "messages": messages,
+                "messages": sanitized_messages,
                 "temperature": temperature,
                 "stream": True,
                 "stream_options": {"include_usage": True},
@@ -142,7 +200,16 @@ class NebiusProvider(AIProvider):
             if max_tokens:
                 kwargs["max_tokens"] = max_tokens
 
-            response_stream = await self._client.chat.completions.create(**kwargs)
+            client = self._get_client()
+            try:
+                response_stream = await client.chat.completions.create(**kwargs)
+            except Exception:
+                # If stream_options is not supported, retry without it
+                if "stream_options" in kwargs:
+                    kwargs.pop("stream_options", None)
+                    response_stream = await client.chat.completions.create(**kwargs)
+                else:
+                    raise
 
             async for chunk in stream_response(response_stream, self._usage):
                 yield chunk
@@ -154,7 +221,8 @@ class NebiusProvider(AIProvider):
     async def list_models(self) -> list[dict[str, Any]]:
         """List available models from Nebius."""
         try:
-            models = await self._client.models.list()
+            client = self._get_client()
+            models = await client.models.list()
             return [
                 {"id": m.id, "owned_by": m.owned_by, "created": m.created}
                 for m in models.data
@@ -170,10 +238,8 @@ class NebiusProvider(AIProvider):
 
     def set_base_url(self, base_url: str) -> None:
         """Dynamically configure the provider base URL endpoint."""
-        self._client = AsyncOpenAI(
-            api_key=settings.nebius_api_key or "mock-nebius-key",
-            base_url=base_url,
-        )
+        self._base_url = base_url
+        self._client = None
         logger.info("ai.nebius.base_url_updated", base_url=base_url)
 
     def get_usage(self) -> dict[str, Any]:

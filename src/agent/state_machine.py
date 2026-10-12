@@ -51,7 +51,7 @@ class AgentState(StrEnum):
 
 # Valid state transitions
 TRANSITIONS: dict[AgentState, set[AgentState]] = {
-    AgentState.IDLE: {AgentState.ANALYZING, AgentState.CANCELLED, AgentState.STOPPED},
+    AgentState.IDLE: {AgentState.ANALYZING, AgentState.CANCELLED, AgentState.STOPPED, AgentState.FAILED},
     AgentState.ANALYZING: {AgentState.PLANNING, AgentState.FAILED, AgentState.CANCELLED, AgentState.STOPPED},
     AgentState.PLANNING: {
         AgentState.EXECUTING,

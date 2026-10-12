@@ -76,7 +76,13 @@ class TerminalSession:
 
         logger.info("terminal.session.exec", session_id=self.session_id, command=command[:150], cwd=self.cwd)
 
+        from src.events.event_bus import event_bus
+        from src.events.events import CoreMindEvent, EventType
+
         proc: asyncio.subprocess.Process | None = None
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 shell_bin,
@@ -88,13 +94,40 @@ class TerminalSession:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout_seconds,
-            )
+            async def _read_session_stream(reader: asyncio.StreamReader, is_err: bool) -> None:
+                while True:
+                    line = await reader.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace")
+                    if is_err:
+                        stderr_chunks.append(decoded)
+                    else:
+                        stdout_chunks.append(decoded)
+                    # Don't emit delimiter control lines to frontend
+                    if delimiter not in decoded and not decoded.startswith("EXIT:") and not decoded.startswith("PWD:"):
+                        await event_bus.emit(CoreMindEvent(
+                            type=EventType.COMMAND_OUTPUT,
+                            session_id=self.session_id,
+                            data={
+                                "command": command,
+                                "output": decoded,
+                                "stream": "stderr" if is_err else "stdout",
+                            },
+                        ))
 
-            raw_stdout = stdout_bytes.decode("utf-8", errors="replace")
-            stderr = stderr_bytes.decode("utf-8", errors="replace")
+            if proc.stdout and proc.stderr:
+                await asyncio.wait_for(
+                    asyncio.gather(
+                        _read_session_stream(proc.stdout, False),
+                        _read_session_stream(proc.stderr, True),
+                    ),
+                    timeout=timeout_seconds,
+                )
+                await proc.wait()
+
+            raw_stdout = "".join(stdout_chunks)
+            stderr = "".join(stderr_chunks)
 
             # Parse sentinel blocks
             exit_code = proc.returncode or 0
@@ -143,18 +176,24 @@ class TerminalSession:
             self.history.append(res)
             return res
 
-        except TimeoutError:
+        except (TimeoutError, asyncio.CancelledError) as err:
+            is_cancelled = isinstance(err, asyncio.CancelledError)
             if proc is not None:
                 try:
-                    proc.kill()
+                    proc.terminate()
+                    await asyncio.sleep(0.1)
+                    if proc.returncode is None:
+                        proc.kill()
                 except Exception:
                     pass
+            if is_cancelled:
+                raise
             return {
                 "session_id": self.session_id,
                 "command": command,
                 "cwd": self.cwd,
                 "exit_code": -1,
-                "stdout": "",
+                "stdout": "".join(stdout_chunks)[:50_000],
                 "stderr": f"Command timed out after {timeout_seconds}s",
                 "success": False,
             }
