@@ -17,21 +17,34 @@ from src.ai.provider import AIResponse, get_ai_provider
 from src.utils.logger import logger
 
 
-# ── Fast-path detection ─────────────────────────────────────────────
 _SIMPLE_TASK_KEYWORDS = {
     "search", "trending", "look up", "find me", "what is", "who is",
     "tell me about", "latest", "current",
 }
 
+_CODING_ACTION_KEYWORDS = {
+    "create", "edit", "write", "fix", "patch", "modify", "implement",
+    "refactor", "debug", "test", "build", "delete", "remove", "add", "update",
+}
+
+_CODE_EXTENSIONS = (
+    ".py", ".ts", ".js", ".html", ".css", ".json", ".dart", ".go", ".rs",
+)
+
 
 def _is_simple_task(task: str) -> bool:
-    """Detect tasks that don't need a full LLM planning call."""
+    """Detect tasks that don't need a full LLM planning call (pure lookups/queries)."""
     lower = task.strip().lower()
+    # If it involves any coding actions or file operations, it is NOT simple
+    if any(kw in lower for kw in _CODING_ACTION_KEYWORDS):
+        return False
+    if any(ext in lower for ext in _CODE_EXTENSIONS):
+        return False
+
     word_count = len(lower.split())
-    # Very short tasks or pure search/lookup tasks
-    if word_count <= 8:
-        return True
     if any(kw in lower for kw in _SIMPLE_TASK_KEYWORDS):
+        return True
+    if word_count <= 4:
         return True
     return False
 

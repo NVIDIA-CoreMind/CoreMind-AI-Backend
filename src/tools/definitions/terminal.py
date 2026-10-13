@@ -41,12 +41,18 @@ async def execute_terminal(
     command: str,
     timeout_ms: int | None = None,
     is_background: bool = False,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
     **_kwargs: Any,
 ) -> dict[str, Any]:
-    """Execute a shell command in the project directory with background server support."""
+    """Execute a shell command in the project directory with live streaming and background support."""
     timeout = (timeout_ms or settings.default_command_timeout_ms) / 1000
 
     cmd_stripped = command.strip()
+    from src.security.command_policy import validate_command
+    validate_command(cmd_stripped)
+
     is_server = (
         is_background
         or cmd_stripped.endswith("&")
@@ -98,8 +104,13 @@ async def execute_terminal(
         }
 
     logger.info("tools.terminal.execute", command=command[:200], cwd=project_path)
+    from src.events.event_bus import event_bus
+    from src.events.events import CoreMindEvent, EventType
 
     process: asyncio.subprocess.Process | None = None
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+
     try:
         process = await asyncio.create_subprocess_shell(
             command,
@@ -108,14 +119,41 @@ async def execute_terminal(
             stderr=asyncio.subprocess.PIPE,
         )
 
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(),
-            timeout=timeout,
-        )
+        async def _read_stream(reader: asyncio.StreamReader, is_err: bool) -> None:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                decoded = line.decode("utf-8", errors="replace")
+                if is_err:
+                    stderr_chunks.append(decoded)
+                else:
+                    stdout_chunks.append(decoded)
+                await event_bus.emit(CoreMindEvent(
+                    type=EventType.COMMAND_OUTPUT,
+                    agent_id=agent_id,
+                    task_id=task_id or agent_id,
+                    session_id=session_id,
+                    data={
+                        "command": command,
+                        "output": decoded,
+                        "stream": "stderr" if is_err else "stdout",
+                    },
+                ))
 
-        stdout = stdout_bytes.decode("utf-8", errors="replace")[:MAX_OUTPUT_SIZE]
-        stderr = stderr_bytes.decode("utf-8", errors="replace")[:MAX_OUTPUT_SIZE]
-        exit_code = process.returncode or 0
+        if process.stdout and process.stderr:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _read_stream(process.stdout, False),
+                    _read_stream(process.stderr, True),
+                ),
+                timeout=timeout,
+            )
+            await process.wait()
+
+        stdout = "".join(stdout_chunks)[:MAX_OUTPUT_SIZE]
+        stderr = "".join(stderr_chunks)[:MAX_OUTPUT_SIZE]
+        exit_code = process.returncode if process.returncode is not None else 0
 
         logger.info("tools.terminal.completed", command=command[:100], exit_code=exit_code)
 
@@ -127,17 +165,23 @@ async def execute_terminal(
             "success": exit_code == 0,
         }
 
-    except TimeoutError:
-        logger.error("tools.terminal.timeout", command=command[:100], timeout_ms=timeout * 1000)
+    except (TimeoutError, asyncio.CancelledError) as err:
+        is_cancelled = isinstance(err, asyncio.CancelledError)
+        logger.error("tools.terminal.interrupted", command=command[:100], cancelled=is_cancelled)
         if process is not None:
             try:
-                process.kill()
+                process.terminate()
+                await asyncio.sleep(0.1)
+                if process.returncode is None:
+                    process.kill()
             except Exception:
                 pass
+        if is_cancelled:
+            raise
         return {
             "command": command,
             "exit_code": -1,
-            "stdout": "",
+            "stdout": "".join(stdout_chunks)[:MAX_OUTPUT_SIZE],
             "stderr": f"Command timed out after {timeout}s",
             "success": False,
         }

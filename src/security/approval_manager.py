@@ -35,6 +35,8 @@ class ApprovalRequest:
     tool_name: str
     args: dict[str, Any]
     description: str
+    session_id: str | None = None
+    task_id: str | None = None
     status: ApprovalStatus = ApprovalStatus.PENDING
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     resolved_at: datetime | None = None
@@ -54,6 +56,8 @@ class ApprovalManager:
         tool_name: str,
         args: dict[str, Any],
         description: str,
+        session_id: str | None = None,
+        task_id: str | None = None,
     ) -> ApprovalRequest:
         """
         Create an approval request and notify the IDE.
@@ -66,6 +70,8 @@ class ApprovalManager:
             tool_name=tool_name,
             args=args,
             description=description,
+            session_id=session_id,
+            task_id=task_id,
         )
 
         self._pending[approval.approval_id] = approval
@@ -81,6 +87,8 @@ class ApprovalManager:
         await event_bus.emit(CoreMindEvent(
             type=EventType.APPROVAL_REQUIRED,
             agent_id=agent_id,
+            session_id=session_id,
+            task_id=task_id,
             data={
                 "approval_id": approval.approval_id,
                 "tool": tool_name,
@@ -116,6 +124,8 @@ class ApprovalManager:
         await event_bus.emit(CoreMindEvent(
             type=EventType.APPROVAL_GRANTED,
             agent_id=req.agent_id,
+            session_id=req.session_id,
+            task_id=req.task_id,
             data={"approval_id": approval_id, "tool": req.tool_name},
         ))
 
@@ -137,6 +147,8 @@ class ApprovalManager:
         await event_bus.emit(CoreMindEvent(
             type=EventType.APPROVAL_DENIED,
             agent_id=req.agent_id,
+            session_id=req.session_id,
+            task_id=req.task_id,
             data={"approval_id": approval_id, "reason": reason},
         ))
 

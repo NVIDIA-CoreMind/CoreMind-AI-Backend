@@ -33,7 +33,7 @@ _FAST_INFO_PREFIXES = (
 
 # Workspace action verbs that require the full AgentLoop (modifying project, running commands)
 _ACTION_VERBS: set[str] = {
-    "create", "build", "make", "implement", "refactor", "modify",
+    "create", "build", "make", "implement", "refactor", "modify", "change", "update", "write", "add",
     "edit", "delete", "remove", "fix", "debug", "run", "execute",
     "install", "deploy", "commit", "push", "pull", "merge",
 }

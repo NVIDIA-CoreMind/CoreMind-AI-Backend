@@ -63,26 +63,33 @@ class ChangeReviewManager:
             if file_path not in cs.original_contents:
                 cs.original_contents[file_path] = original_content
 
-    def get_change_set(self, change_id: str) -> ChangeSet | None:
-        return self._change_sets.get(change_id)
+    def get_change_set(self, identifier: str) -> ChangeSet | None:
+        """Find change set by change_id or associated agent_id."""
+        if identifier in self._change_sets:
+            return self._change_sets[identifier]
+        for cs in self._change_sets.values():
+            if cs.agent_id == identifier:
+                return cs
+        return None
 
-    def preview_changes(self, change_id: str) -> dict[str, Any] | None:
-        cs = self._change_sets.get(change_id)
+    def preview_changes(self, identifier: str) -> dict[str, Any] | None:
+        """Preview changes by change_id or agent_id."""
+        cs = self.get_change_set(identifier)
         return cs.to_dict() if cs else None
 
-    def accept_changes(self, change_id: str) -> bool:
+    def accept_changes(self, identifier: str) -> bool:
         """Mark all files in the change set as accepted."""
-        cs = self._change_sets.get(change_id)
+        cs = self.get_change_set(identifier)
         if not cs:
             return False
         for f in cs.files.values():
             f.accepted = True
-        logger.info("changes.accepted_all", change_id=change_id)
+        logger.info("changes.accepted_all", change_id=cs.change_id)
         return True
 
-    def reject_changes(self, change_id: str) -> bool:
+    def reject_changes(self, identifier: str) -> bool:
         """Reject all changes and revert files back to original contents."""
-        cs = self._change_sets.get(change_id)
+        cs = self.get_change_set(identifier)
         if not cs:
             return False
 
@@ -99,19 +106,19 @@ class ChangeReviewManager:
         for f in cs.files.values():
             f.accepted = False
 
-        logger.info("changes.rejected_all", change_id=change_id)
+        logger.info("changes.rejected_all", change_id=cs.change_id)
         return True
 
-    def accept_file(self, change_id: str, file_path: str) -> bool:
-        cs = self._change_sets.get(change_id)
+    def accept_file(self, identifier: str, file_path: str) -> bool:
+        cs = self.get_change_set(identifier)
         if not cs or file_path not in cs.files:
             return False
         cs.files[file_path].accepted = True
         return True
 
-    def reject_file(self, change_id: str, file_path: str) -> bool:
+    def reject_file(self, identifier: str, file_path: str) -> bool:
         """Reject a single file change and revert it."""
-        cs = self._change_sets.get(change_id)
+        cs = self.get_change_set(identifier)
         if not cs or file_path not in cs.files:
             return False
 

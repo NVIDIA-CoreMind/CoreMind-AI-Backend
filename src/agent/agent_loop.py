@@ -10,6 +10,7 @@ This is the brain of CoreMind.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,7 @@ from typing import Any
 from src.agent.checkpoint import Checkpoint, checkpoint_manager
 from src.agent.executor import AgentExecutor
 from src.agent.planner import generate_task_graph
+from src.project.project_manager import project_manager
 from src.agent.state_machine import AgentState, StateMachine
 from src.agent.task import AgentTask, TaskStatus
 from src.agent.task_graph import TaskNodeStatus
@@ -42,7 +44,12 @@ class AgentLoop:
         self._task = task
         self._state = StateMachine(task.agent_id)
         self._context = ContextManager(task.project_path)
-        self._executor = AgentExecutor(task.project_path, task.agent_id)
+        self._executor = AgentExecutor(
+            task.project_path,
+            task.agent_id,
+            session_id=task.session_id,
+            task_id=task.task_id,
+        )
         self._provider = get_ai_provider()
         self._tools = tool_registry.to_openai_tools()
         self._stopped = False
@@ -87,15 +94,33 @@ class AgentLoop:
 
             # Generate structured task graph
             try:
+                project_info = project_manager.get_project(self._task.project_path) or {}
+                repo_summary = ""
+                try:
+                    repo_summary = self._context._repo_map.build_compact_summary(max_chars=2000)
+                except Exception:
+                    pass
+                proj_ctx = (
+                    f"Project root: {self._task.project_path}\n"
+                    f"Language: {project_info.get('language', 'unknown')}\n"
+                    f"Framework: {project_info.get('framework', 'unknown')}\n"
+                    f"{repo_summary}"
+                )
                 task_graph = await generate_task_graph(
                     task=self._task.task,
-                    project_context=f"Project root: {self._task.project_path}",
+                    project_context=proj_ctx,
                 )
                 self._task.task_graph = task_graph
                 set_active_task_graph(self._task.agent_id, self._task.task_graph)
+                task_nodes = task_graph.to_dict()["tasks"]
                 await self._emit(
                     EventType.PLAN_CREATED,
-                    {"goal": task_graph.goal, "tasks": task_graph.to_dict()["tasks"]},
+                    {
+                        "goal": task_graph.goal,
+                        "nodes": task_nodes,
+                        "tasks": task_nodes,
+                        "task_graph": task_graph.to_dict(),
+                    },
                 )
             except Exception as plan_err:
                 logger.warn("agent.loop.plan_generation_warn", error=str(plan_err))
@@ -119,24 +144,33 @@ class AgentLoop:
             await self._set_task_status(TaskStatus.EXECUTING)
             self._state.transition(AgentState.EXECUTING)
             step = 0
+            nudge_count = 0
+            last_tool_signatures: list[str] = []
+            consecutive_duplicate_turns = 0
 
             while step < settings.max_agent_steps and not self._stopped:
                 step += 1
                 self._task.steps_completed = step
 
-                # Mark next runnable subtask in progress if available
-                runnable_tasks = self._task.task_graph.get_runnable_tasks()
-                current_subtask_id = ""
-                if runnable_tasks:
-                    current_task_node = runnable_tasks[0]
-                    current_subtask_id = current_task_node.id
-                    self._task.task_graph.update_task(
-                        current_task_node.id, status=TaskNodeStatus.IN_PROGRESS
-                    )
-                    await self._emit(
-                        EventType.TASK_STARTED,
-                        {"task_id": current_task_node.id, "title": current_task_node.title},
-                    )
+                # Track active subtask: prioritize existing in_progress, else next runnable
+                in_progress_nodes = [
+                    t for t in self._task.task_graph._tasks.values()
+                    if t.status == TaskNodeStatus.IN_PROGRESS
+                ]
+                current_task_node = in_progress_nodes[0] if in_progress_nodes else None
+                if not current_task_node:
+                    runnable_tasks = self._task.task_graph.get_runnable_tasks()
+                    if runnable_tasks:
+                        current_task_node = runnable_tasks[0]
+                        self._task.task_graph.update_task(
+                            current_task_node.id, status=TaskNodeStatus.IN_PROGRESS
+                        )
+                        await self._emit(
+                            EventType.TASK_STARTED,
+                            {"task_id": current_task_node.id, "title": current_task_node.title},
+                        )
+
+                current_subtask_id = current_task_node.id if current_task_node else ""
 
                 logger.info(
                     "agent.loop.step",
@@ -145,6 +179,15 @@ class AgentLoop:
                     max_steps=settings.max_agent_steps,
                 )
 
+                # Emit real thinking event before consulting model
+                await self._emit(
+                    EventType.AGENT_THINKING,
+                    {"phase": "inference", "step": step, "max_steps": settings.max_agent_steps},
+                )
+
+                if self._stopped:
+                    break
+
                 # Ask AI Provider for next action
                 response = await self._provider.chat(
                     messages=messages,
@@ -152,9 +195,21 @@ class AgentLoop:
                     temperature=0.0,
                 )
 
-                # Stream AI message/token to frontend
+                if self._stopped:
+                    break
+
+                # Emit token streaming / usage events to frontend
+                if response.usage:
+                    await self._emit(EventType.AI_USAGE, response.usage)
+
+                if response.content or response.usage:
+                    token_payload: dict[str, Any] = {"token": response.content or ""}
+                    if response.usage:
+                        token_payload.update(response.usage)
+                    await self._emit(EventType.AI_TOKEN, token_payload)
+
                 if response.content:
-                    await self._emit(EventType.AI_TOKEN, {"token": response.content})
+                    self._task.response = response.content
 
                 # Add assistant message to context
                 self._context.add_assistant_message(
@@ -164,6 +219,41 @@ class AgentLoop:
 
                 # If AI wants to call tools
                 if response.tool_calls:
+                    # Prevent duplicate tool execution loops
+                    current_signatures = [
+                        f"{tc.get('function', {}).get('name', '')}:{tc.get('function', {}).get('arguments', '')}"
+                        for tc in response.tool_calls
+                    ]
+                    if current_signatures == last_tool_signatures:
+                        consecutive_duplicate_turns += 1
+                    else:
+                        consecutive_duplicate_turns = 0
+                        last_tool_signatures = current_signatures
+
+                    if consecutive_duplicate_turns >= 2:
+                        logger.warn(
+                            "agent.loop.duplicate_tool_loop_prevented",
+                            agent_id=self._task.agent_id,
+                            tools=current_signatures,
+                        )
+                        if consecutive_duplicate_turns >= 3:
+                            logger.warn(
+                                "agent.loop.duplicate_tool_loop_halting",
+                                agent_id=self._task.agent_id,
+                            )
+                            break
+
+                        for tc in response.tool_calls:
+                            self._context.add_tool_result(
+                                tool_call_id=tc.get("id") or "call_dup",
+                                tool_name=tc.get("function", {}).get("name", "tool"),
+                                result=json.dumps({
+                                    "notice": "Duplicate tool call detected with identical arguments. Please synthesize existing findings or proceed to next steps."
+                                }),
+                            )
+                        messages = self._context.build_messages()
+                        continue
+
                     self._state.transition(AgentState.OBSERVING)
 
                     # Execute tool calls
@@ -180,27 +270,28 @@ class AgentLoop:
                     # Track in task
                     self._task.tool_calls.extend(response.tool_calls)
 
-                    # Track file changes and tool types
+                    # Track file changes ONLY when tool execution confirms disk modification
                     called_edit_tool = False
                     called_inspection_tool = False
                     called_execution_tool = False
 
-                    for tc in response.tool_calls:
-                        func = tc.get("function", {})
-                        name = func.get("name", "")
-                        if name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff", "delete_file"):
-                            called_edit_tool = True
-                            try:
-                                args = json.loads(func.get("arguments", "{}"))
-                                path = args.get("path") or args.get("file_path") or ""
-                                if path and path not in self._task.files_changed:
-                                    self._task.files_changed.append(path)
-                                    self._context.record_file_changed(path)
-                            except json.JSONDecodeError:
-                                pass
-                        elif name in ("list_directory", "list_files", "read_file", "search_files", "search_code", "git_status", "git_log", "inspect_git", "get_diagnostics"):
+                    for res in results:
+                        tool_nm = res.get("tool_name", "")
+                        try:
+                            inner_res = json.loads(res.get("content", "{}"))
+                        except Exception:
+                            inner_res = {}
+
+                        if "error" not in inner_res and inner_res.get("verified_on_disk", False):
+                            f_path = inner_res.get("path") or ""
+                            if f_path and f_path not in self._task.files_changed:
+                                self._task.files_changed.append(f_path)
+                                self._context.record_file_changed(f_path)
+                                called_edit_tool = True
+
+                        if tool_nm in ("list_directory", "list_files", "read_file", "search_files", "search_code", "git_status", "git_log", "inspect_git", "get_diagnostics", "web_search"):
                             called_inspection_tool = True
-                        elif name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
+                        elif tool_nm in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
                             called_execution_tool = True
 
                     # Progress task graph based on actions taken
@@ -211,16 +302,26 @@ class AgentLoop:
 
                         if called_edit_tool:
                             should_complete = True
+                            # Also complete any other pending/in_progress implementation tasks
+                            for t in self._task.task_graph._tasks.values():
+                                if t.id != current_subtask_id and t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS) and any(
+                                    kw in t.title.lower() for kw in ("edit", "write", "create", "implement", "modify", "patch", "change", "code", "fix", "add")
+                                ):
+                                    self._task.task_graph.complete_task(t.id, result="Code modification executed")
+                                    await self._emit(
+                                        EventType.TASK_COMPLETED,
+                                        {"task_id": t.id, "title": t.title, "status": "completed"},
+                                    )
                         elif called_inspection_tool and any(
-                            kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze", "explore")
+                            kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze", "explore", "examine", "find")
                         ):
                             should_complete = True
                         elif called_execution_tool and any(
-                            kw in title_lower for kw in ("verify", "test", "run", "check")
+                            kw in title_lower for kw in ("verify", "test", "run", "check", "build")
                         ):
                             should_complete = True
 
-                        if should_complete:
+                        if should_complete and node and node.status == TaskNodeStatus.IN_PROGRESS:
                             self._task.task_graph.complete_task(
                                 current_subtask_id, result="Action executed successfully"
                             )
@@ -236,41 +337,83 @@ class AgentLoop:
                     continue
 
                 # If AI responded with text only (no tool calls):
-                # If changes have already been made or no file-oriented tasks remain, complete
-                has_pending_creation = not self._task.files_changed and any(
-                    any(kw in t.title.lower() for kw in ("create", "edit", "write", "make", "implement", "code", "file", "build"))
-                    for t in self._task.task_graph._tasks.values()
-                    if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS)
-                )
-                if not has_pending_creation:
+                if response.content:
+                    self._task.response = response.content
+
+                # If modifications have already been verified on disk, proceed directly to verification
+                if self._task.files_changed:
                     if current_subtask_id:
                         node = self._task.task_graph.get_task(current_subtask_id)
-                        self._task.task_graph.complete_task(
-                            current_subtask_id, result="Finished without additional tool calls"
-                        )
-                        await self._emit(
-                            EventType.TASK_COMPLETED,
-                            {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
-                        )
+                        if node and node.status == TaskNodeStatus.IN_PROGRESS:
+                            self._task.task_graph.complete_task(
+                                current_subtask_id, result=response.content or "Completed file modifications"
+                            )
+                            await self._emit(
+                                EventType.TASK_COMPLETED,
+                                {"task_id": current_subtask_id, "title": node.title, "status": "completed"},
+                            )
                     break
 
-                # AI chatted without executing pending creation/edit task — nudge it to create the file
-                logger.info("agent.loop.nudge_action", agent_id=self._task.agent_id)
-                self._context.add_user_message(
-                    "You responded with text, but the task requires creating or modifying code. "
-                    "Please proceed now to create or edit the necessary file(s) using the `write_file` or `edit_file` tool. "
-                    "If a filename or details were not specified, use standard conventions (e.g. create `main.py`)."
+                pending_subtasks = [
+                    t for t in self._task.task_graph._tasks.values()
+                    if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS)
+                ]
+
+                # If all tasks are completed or graph completed: we are done
+                if not pending_subtasks or self._task.task_graph.is_completed():
+                    if current_subtask_id:
+                        node = self._task.task_graph.get_task(current_subtask_id)
+                        if node and node.status == TaskNodeStatus.IN_PROGRESS:
+                            self._task.task_graph.complete_task(
+                                current_subtask_id, result=response.content or "Completed without additional tool calls"
+                            )
+                            await self._emit(
+                                EventType.TASK_COMPLETED,
+                                {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
+                            )
+                    break
+
+                # If there are pending action subtasks (e.g. creating/modifying code)
+                # and no files changed yet, and agent has not nudged twice: prompt to continue action
+                edit_kws = (
+                    "create", "edit", "write", "modify", "implement", "build", "patch", "fix", "add"
                 )
+                has_pending_actions = any(
+                    any(kw in t.title.lower() for kw in edit_kws)
+                    for t in pending_subtasks
+                )
+                if has_pending_actions and nudge_count < 2:
+                    nudge_count += 1
+                    next_node = pending_subtasks[0]
+                    logger.info(
+                        "agent.loop.nudge_action",
+                        agent_id=self._task.agent_id,
+                        nudge_count=nudge_count,
+                        next_subtask=next_node.title,
+                    )
+                    self._context.add_user_message(
+                        f"You provided a text explanation, but the task requires concrete actions:\n"
+                        f"- Next planned task: [{next_node.id}] {next_node.title}\n"
+                        f"Please proceed now using tools (`write_file`, `edit_file`, or `terminal`)."
+                    )
+                    messages = self._context.build_messages()
+                    continue
+
+                # Exhausted nudges: mark current in-progress task completed with explanation and exit
                 if current_subtask_id:
                     node = self._task.task_graph.get_task(current_subtask_id)
-                    title_lower = (node.title if node else "").lower()
-                    if any(kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze")):
-                        self._task.task_graph.complete_task(current_subtask_id, result="Inspection completed")
+                    if node and node.status == TaskNodeStatus.IN_PROGRESS:
+                        finish_res = response.content or "Finished without additional tool calls"
+                        self._task.task_graph.complete_task(current_subtask_id, result=finish_res)
                         await self._emit(
                             EventType.TASK_COMPLETED,
-                            {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
+                            {
+                                "task_id": current_subtask_id,
+                                "title": node.title if node else "",
+                                "status": "completed",
+                            },
                         )
-                messages = self._context.build_messages()
+                break
 
             # Mark all remaining tasks completed if not failed, and emit TASK_COMPLETED so UI updates
             for t in self._task.task_graph._tasks.values():
@@ -290,10 +433,17 @@ class AgentLoop:
                 if not verification.success:
                     self._state.transition(AgentState.FAILED)
                     self._task.error = f"Verification failed: {verification.error_summary[:500]}"
-                    if self._checkpoint:
-                        await checkpoint_manager.rollback(self._checkpoint)
+                    # Do not rollback files: preserve disk modifications for review
                     await self._set_task_status(TaskStatus.FAILED)
-                    await self._emit(EventType.AGENT_FAILED, {"error": self._task.error})
+                    await self._emit(EventType.AGENT_FAILED, {
+                        "error": self._task.error,
+                        "files_changed": self._task.files_changed,
+                        "verification": {
+                            "command": verification.command,
+                            "exit_code": verification.exit_code,
+                            "error_summary": verification.error_summary,
+                        },
+                    })
                     await self._emit(EventType.AGENT_ERROR, {"error": self._task.error})
                     return self._task
 
@@ -313,12 +463,39 @@ class AgentLoop:
                 except Exception:
                     pass
 
+                # Populate truthful final response
+                clean_done = "Agent task completed successfully."
+                if not self._task.response or self._task.response.strip() == clean_done:
+                    for m in reversed(self._context._conversation):
+                        if m.get("role") == "assistant" and m.get("content"):
+                            self._task.response = m.get("content")
+                            break
+
+                actions_summary: list[str] = []
+                if self._task.files_changed:
+                    chg_str = ", ".join(self._task.files_changed)
+                    actions_summary.append(f"Modified files ({len(self._task.files_changed)}): {chg_str}")
+                if self._task.tool_calls:
+                    actions_summary.append(f"Tool operations: {len(self._task.tool_calls)}")
+                if self._task.execution_results:
+                    last_exec = self._task.execution_results[-1]
+                    if last_exec.get("success"):
+                        actions_summary.append(f"Verification passed: `{last_exec.get('command')}`")
+
+                if not self._task.response:
+                    if actions_summary:
+                        formatted = "\n".join(f"- {a}" for a in actions_summary)
+                        self._task.response = f"Task execution completed:\n{formatted}"
+                    else:
+                        self._task.response = "Agent task completed successfully."
+
                 await self._emit(EventType.AGENT_COMPLETED, {
                     "files_changed": self._task.files_changed,
                     "steps": self._task.steps_completed,
                     "task_graph": self._task.task_graph.to_dict(),
                     "change_id": self._change_set.change_id if self._change_set else None,
                     "local_url": local_url,
+                    "response": self._task.response,
                 })
             else:
                 if self._state.can_transition(AgentState.CANCELLED):
@@ -327,8 +504,26 @@ class AgentLoop:
                     self._state.transition(AgentState.STOPPED)
                 self._task.completed_at = datetime.now(UTC)
                 await self._set_task_status(TaskStatus.CANCELLED)
-                await self._emit(EventType.AGENT_STOPPED, {})
+                await self._emit(EventType.AGENT_STOPPED, {
+                    "reason": "Task was stopped by user request",
+                    "files_changed": self._task.files_changed,
+                })
 
+            return self._task
+
+        except asyncio.CancelledError:
+            logger.info("agent.loop.cancelled", agent_id=self._task.agent_id)
+            self._stopped = True
+            if self._state.can_transition(AgentState.CANCELLED):
+                self._state.transition(AgentState.CANCELLED)
+            elif self._state.can_transition(AgentState.STOPPED):
+                self._state.transition(AgentState.STOPPED)
+            self._task.completed_at = datetime.now(UTC)
+            await self._set_task_status(TaskStatus.CANCELLED)
+            await self._emit(EventType.AGENT_STOPPED, {
+                "reason": "Task was cancelled",
+                "files_changed": self._task.files_changed,
+            })
             return self._task
 
         except Exception as exc:
@@ -341,6 +536,8 @@ class AgentLoop:
                     await checkpoint_manager.rollback(self._checkpoint)
                 except Exception:
                     pass
+            if self._state.can_transition(AgentState.FAILED):
+                self._state.transition(AgentState.FAILED)
             await self._set_task_status(TaskStatus.FAILED)
             await self._emit(EventType.AGENT_FAILED, {"error": str(exc)})
             await self._emit(EventType.AGENT_ERROR, {"error": str(exc)})
@@ -436,19 +633,17 @@ class AgentLoop:
                         result=r["content"],
                     )
 
-                # Track any files changed during repair
-                for tc in fix_response.tool_calls:
-                    func = tc.get("function", {})
-                    name = func.get("name", "")
-                    if name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff"):
-                        try:
-                            args = json.loads(func.get("arguments", "{}"))
-                            f_path = args.get("path") or args.get("file_path") or ""
-                            if f_path and f_path not in self._task.files_changed:
-                                self._task.files_changed.append(f_path)
-                                self._context.record_file_changed(f_path)
-                        except Exception:
-                            pass
+                # Track any files changed during repair that are confirmed on disk
+                for r in results:
+                    try:
+                        inner_r = json.loads(r.get("content", "{}"))
+                    except Exception:
+                        inner_r = {}
+                    if "error" not in inner_r and inner_r.get("verified_on_disk", False):
+                        f_path = inner_r.get("path") or ""
+                        if f_path and f_path not in self._task.files_changed:
+                            self._task.files_changed.append(f_path)
+                            self._context.record_file_changed(f_path)
 
         return last_result
 

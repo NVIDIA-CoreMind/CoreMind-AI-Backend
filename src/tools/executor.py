@@ -35,6 +35,8 @@ class ToolExecutor:
         is_approved: bool = False,
         agent_mode: AgentMode = AgentMode.WORK,
         network_enabled: bool = True,
+        session_id: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute a tool by name with the given arguments.
@@ -94,8 +96,19 @@ class ToolExecutor:
         )
 
         try:
+            exec_kwargs: dict[str, Any] = {
+                "project_path": project_path,
+                "agent_id": agent_id or "",
+            }
+            if session_id is not None:
+                exec_kwargs["session_id"] = session_id
+            if task_id is not None and "task_id" not in args:
+                exec_kwargs["task_id"] = task_id
+            exec_kwargs["agent_task_id"] = task_id
+            exec_kwargs.update(args)
+
             result = await asyncio.wait_for(
-                tool.executor(project_path=project_path, agent_id=agent_id or "", **args),
+                tool.executor(**exec_kwargs),
                 timeout=tool.timeout_ms / 1000,
             )
 
@@ -131,6 +144,8 @@ class ToolExecutor:
         is_approved: bool = False,
         agent_mode: AgentMode = AgentMode.WORK,
         network_enabled: bool = True,
+        session_id: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute an OpenAI-format tool call (from Nemotron's response).
@@ -139,15 +154,25 @@ class ToolExecutor:
         """
         func = tool_call.get("function", {})
         name = func.get("name", "")
-        args_str = func.get("arguments", "{}")
+        args_raw = func.get("arguments", "{}")
 
-        try:
-            args = json.loads(args_str)
-        except json.JSONDecodeError as err:
-            raise ToolError(
-                ErrorCode.TOOL_INVALID_ARGS,
-                f"Invalid JSON arguments for tool '{name}': {args_str}",
-            ) from err
+        if isinstance(args_raw, dict):
+            args = args_raw
+        elif isinstance(args_raw, str):
+            clean_str = args_raw.strip()
+            if clean_str.startswith("```json") and clean_str.endswith("```"):
+                clean_str = clean_str[7:-3].strip()
+            elif clean_str.startswith("```") and clean_str.endswith("```"):
+                clean_str = clean_str[3:-3].strip()
+            try:
+                args = json.loads(clean_str)
+            except json.JSONDecodeError as err:
+                raise ToolError(
+                    ErrorCode.TOOL_INVALID_ARGS,
+                    f"Invalid JSON arguments for tool '{name}': {args_raw}",
+                ) from err
+        else:
+            args = {}
 
         return await self.execute(
             tool_name=name,
@@ -157,4 +182,6 @@ class ToolExecutor:
             is_approved=is_approved,
             agent_mode=agent_mode,
             network_enabled=network_enabled,
+            session_id=session_id,
+            task_id=task_id,
         )

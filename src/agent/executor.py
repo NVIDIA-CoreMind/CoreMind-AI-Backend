@@ -33,11 +33,15 @@ class AgentExecutor:
         agent_id: str,
         checkpoint: Checkpoint | None = None,
         change_set_id: str | None = None,
+        session_id: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         self._project_path = project_path
         self._agent_id = agent_id
         self._checkpoint = checkpoint
         self._change_set_id = change_set_id
+        self._session_id = session_id
+        self._task_id = task_id or agent_id
         self._tool_executor = ToolExecutor()
 
     def set_checkpoint(self, checkpoint: Checkpoint) -> None:
@@ -45,6 +49,16 @@ class AgentExecutor:
 
     def set_change_set_id(self, change_set_id: str) -> None:
         self._change_set_id = change_set_id
+
+    async def _emit(self, event_type: EventType, data: dict[str, Any]) -> None:
+        """Emit an event with full correlation identifiers."""
+        await event_bus.emit(CoreMindEvent(
+            type=event_type,
+            agent_id=self._agent_id,
+            task_id=self._task_id,
+            session_id=self._session_id,
+            data=data,
+        ))
 
     async def execute_tool_calls(
         self,
@@ -59,22 +73,32 @@ class AgentExecutor:
         for tc in tool_calls:
             func = tc.get("function", {})
             tool_name = func.get("name", "")
-            tool_call_id = tc.get("id", "")
+            tool_call_id = tc.get("id") or f"call_{tool_name}"
 
-            # Emit tool started event
-            await event_bus.emit(CoreMindEvent(
-                type=EventType.TOOL_STARTED,
-                agent_id=self._agent_id,
-                data={"tool": tool_name, "tool_call_id": tool_call_id},
-            ))
-
-            try:
-                raw_args = func.get("arguments", "{}")
+            raw_args = func.get("arguments", "{}")
+            if isinstance(raw_args, dict):
+                args = raw_args
+            elif isinstance(raw_args, str):
                 try:
-                    args = json.loads(raw_args)
+                    clean_str = raw_args.strip()
+                    if clean_str.startswith("```json") and clean_str.endswith("```"):
+                        clean_str = clean_str[7:-3].strip()
+                    elif clean_str.startswith("```") and clean_str.endswith("```"):
+                        clean_str = clean_str[3:-3].strip()
+                    args = json.loads(clean_str)
                 except Exception:
                     args = {}
+            else:
+                args = {}
 
+            # Emit tool started event with tool args for UI transparency
+            await self._emit(EventType.TOOL_STARTED, {
+                "tool": tool_name,
+                "tool_call_id": tool_call_id,
+                "args": args,
+            })
+
+            try:
                 # Get tool definition and canonical name
                 tool_def = tool_registry.get(tool_name)
                 canonical_name = tool_def.name
@@ -84,11 +108,10 @@ class AgentExecutor:
                     command = args.get("command") or args.get("test_command") or args.get("build_command") or ""
                     if command:
                         validate_command(command)
-                        await event_bus.emit(CoreMindEvent(
-                            type=EventType.COMMAND_STARTED,
-                            agent_id=self._agent_id,
-                            data={"command": command},
-                        ))
+                        await self._emit(EventType.COMMAND_STARTED, {
+                            "command": command,
+                            "cwd": self._project_path,
+                        })
 
                 # Checkpoint backup before file modification
                 if canonical_name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff", "delete_file") and self._checkpoint:
@@ -113,15 +136,28 @@ class AgentExecutor:
                         tool_name=tool_name,
                         args=args,
                         description=f"Execute {tool_name} with args: {json.dumps(args)[:200]}",
+                        session_id=self._session_id,
+                        task_id=self._task_id,
                     )
                     approved = await approval_manager.wait_for_decision(approval)
                     if not approved:
                         denied_msg = (
                             f"Tool '{tool_name}' was denied by user: {approval.deny_reason}"
                         )
+                        await self._emit(EventType.TOOL_FAILED, {
+                            "tool": tool_name,
+                            "tool_call_id": tool_call_id,
+                            "error": denied_msg,
+                        })
+                        await self._emit(EventType.TOOL_COMPLETED, {
+                            "tool": tool_name,
+                            "tool_call_id": tool_call_id,
+                            "success": False,
+                            "error": denied_msg,
+                        })
                         results.append({
                             "tool_call_id": tool_call_id,
-                            "content": denied_msg,
+                            "content": json.dumps({"error": denied_msg}),
                             "tool_name": tool_name,
                         })
                         continue
@@ -133,6 +169,8 @@ class AgentExecutor:
                     project_path=self._project_path,
                     agent_id=self._agent_id,
                     is_approved=is_approved,
+                    session_id=self._session_id,
+                    task_id=self._task_id,
                 )
 
                 inner = result.get("result", {})
@@ -140,16 +178,21 @@ class AgentExecutor:
                 # Event notifications for file read
                 if canonical_name == "read_file":
                     path = inner.get("path", "")
-                    await event_bus.emit(CoreMindEvent(
-                        type=EventType.FILE_READ,
-                        agent_id=self._agent_id,
-                        data={"file": path, "total_lines": inner.get("total_lines", 0)},
-                    ))
+                    await self._emit(EventType.FILE_READ, {
+                        "file": path,
+                        "path": path,
+                        "total_lines": inner.get("total_lines", 0),
+                    })
 
                 # Track file changes and emit diffs
                 if canonical_name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff"):
                     path = inner.get("path", "")
                     if path:
+                        # Verify change on disk
+                        from pathlib import Path
+                        on_disk = (Path(self._project_path) / path).exists()
+                        inner["verified_on_disk"] = on_disk
+
                         lines_cnt = inner.get("lines")
                         if lines_cnt is None:
                             lines_cnt = inner.get("additions", 0)
@@ -157,44 +200,32 @@ class AgentExecutor:
 
                         # If newly created, emit file.created immediately for snappy IDE response
                         if action == "created":
-                            await event_bus.emit(CoreMindEvent(
-                                 type=EventType.FILE_CREATED,
-                                 agent_id=self._agent_id,
-                                 data={
-                                     "file": path,
-                                     "path": path,
-                                     "action": "created",
-                                     "lines": lines_cnt,
-                                     "size": inner.get("size", 0),
-                                 },
-                            ))
-
-                        await event_bus.emit(CoreMindEvent(
-                            type=EventType.FILE_CHANGED,
-                            agent_id=self._agent_id,
-                            data={
+                            await self._emit(EventType.FILE_CREATED, {
                                 "file": path,
                                 "path": path,
-                                "action": action,
+                                "action": "created",
                                 "lines": lines_cnt,
-                                "additions": inner.get("additions", 0),
-                                "deletions": inner.get("deletions", 0),
                                 "size": inner.get("size", 0),
-                            },
-                        ))
+                            })
+
+                        await self._emit(EventType.FILE_CHANGED, {
+                            "file": path,
+                            "path": path,
+                            "action": action,
+                            "lines": lines_cnt,
+                            "additions": inner.get("additions", 0),
+                            "deletions": inner.get("deletions", 0),
+                            "size": inner.get("size", 0),
+                        })
 
                         diff_str = inner.get("diff", "")
                         if diff_str:
-                            await event_bus.emit(CoreMindEvent(
-                                type=EventType.DIFF_CREATED,
-                                agent_id=self._agent_id,
-                                data={
-                                    "file": path,
-                                    "diff": diff_str,
-                                    "additions": inner.get("additions", 0),
-                                    "deletions": inner.get("deletions", 0),
-                                },
-                            ))
+                            await self._emit(EventType.DIFF_CREATED, {
+                                "file": path,
+                                "diff": diff_str,
+                                "additions": inner.get("additions", 0),
+                                "deletions": inner.get("deletions", 0),
+                            })
 
                             if self._change_set_id:
                                 fdiff = FileDiff(
@@ -223,29 +254,29 @@ class AgentExecutor:
                 elif canonical_name == "delete_file":
                     path = inner.get("path", "")
                     if path:
-                        await event_bus.emit(CoreMindEvent(
-                            type=EventType.FILE_DELETED,
-                            agent_id=self._agent_id,
-                            data={"file": path, "path": path, "action": "deleted"},
-                        ))
+                        from pathlib import Path
+                        deleted_on_disk = not (Path(self._project_path) / path).exists()
+                        inner["verified_on_disk"] = deleted_on_disk
+                        await self._emit(EventType.FILE_DELETED, {
+                            "file": path,
+                            "path": path,
+                            "action": "deleted",
+                        })
 
                 if canonical_name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
-                    await event_bus.emit(CoreMindEvent(
-                        type=EventType.COMMAND_COMPLETED,
-                        agent_id=self._agent_id,
-                        data={
-                            "command": inner.get("command", ""),
-                            "exit_code": inner.get("exit_code", 0),
-                            "success": inner.get("success", True),
-                        },
-                    ))
+                    await self._emit(EventType.COMMAND_COMPLETED, {
+                        "command": inner.get("command", ""),
+                        "exit_code": inner.get("exit_code", 0),
+                        "success": inner.get("success", True),
+                    })
 
                 # Emit tool completed event
-                await event_bus.emit(CoreMindEvent(
-                    type=EventType.TOOL_COMPLETED,
-                    agent_id=self._agent_id,
-                    data={"tool": tool_name, "success": True, "result": inner},
-                ))
+                await self._emit(EventType.TOOL_COMPLETED, {
+                    "tool": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "success": True,
+                    "result": inner,
+                })
 
                 results.append({
                     "tool_call_id": tool_call_id,
@@ -260,11 +291,18 @@ class AgentExecutor:
                     error=str(exc),
                 )
 
-                await event_bus.emit(CoreMindEvent(
-                    type=EventType.TOOL_COMPLETED,
-                    agent_id=self._agent_id,
-                    data={"tool": tool_name, "success": False, "error": str(exc)},
-                ))
+                await self._emit(EventType.TOOL_FAILED, {
+                    "tool": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "error": str(exc),
+                })
+
+                await self._emit(EventType.TOOL_COMPLETED, {
+                    "tool": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "success": False,
+                    "error": str(exc),
+                })
 
                 results.append({
                     "tool_call_id": tool_call_id,
