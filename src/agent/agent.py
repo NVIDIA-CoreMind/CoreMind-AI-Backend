@@ -51,7 +51,19 @@ class AgentManager:
             from src.events.events import CoreMindEvent, EventType
 
             provider = get_ai_provider()
-            chat_response = await provider.chat(messages=[{"role": "user", "content": task}])
+            chat_messages = [
+                {
+                    "role": "system",
+                    "content": "You are CoreMind AI, an ultra-fast, intelligent coding assistant. Provide clear, direct, and concise answers.",
+                },
+                {"role": "user", "content": task},
+            ]
+            try:
+                chat_response = await provider.chat(messages=chat_messages, max_tokens=1024)
+                response_text = chat_response.content
+            except Exception as exc:
+                logger.error("agent.manager.friendly_chat_error", error=str(exc))
+                raise
 
             agent_task = AgentTask(
                 task_id=aid,
@@ -62,10 +74,10 @@ class AgentManager:
             )
             agent_task.status = TaskStatus.COMPLETED
             agent_task.completed_at = datetime.now(UTC)
-            agent_task.response = chat_response.content
+            agent_task.response = response_text
             agent_task.messages = [
                 {"role": "user", "content": task},
-                {"role": "assistant", "content": chat_response.content},
+                {"role": "assistant", "content": response_text},
             ]
 
             self._tasks[aid] = agent_task
@@ -89,7 +101,8 @@ class AgentManager:
                     "files_changed": [],
                     "steps": 1,
                     "change_id": None,
-                    "response": chat_response.content,
+                    "response": response_text,
+                    "summary": response_text,
                     "task_graph": {}
                 }
             ))
@@ -97,8 +110,10 @@ class AgentManager:
             logger.info("agent.manager.friendly_chat", agent_id=aid, session_id=sid, task=task[:50])
             return {
                 "agent_id": aid,
+                "task_id": aid,
                 "session_id": sid,
                 "status": "completed",
+                "response": response_text,
             }
 
         agent_task = AgentTask(

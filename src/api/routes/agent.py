@@ -62,6 +62,7 @@ class AgentRunResponse(BaseModel):
     task_id: str | None = None
     session_id: str
     status: str
+    response: str | None = None
 
     def model_post_init(self, __context: Any) -> None:
         if self.agent_id and not self.task_id:
