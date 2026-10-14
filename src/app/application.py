@@ -104,7 +104,7 @@ def create_app() -> FastAPI:
 
     # ── Register route modules ──────────────────────────────────────
     from src.api.routes.agent import router as agent_router, api_router as agent_api_router, bare_router as agent_bare_router
-    from src.api.routes.ai import router as ai_router
+    from src.api.routes.ai import router as ai_router, bare_router as ai_bare_router
     from src.api.routes.auth import router as auth_router
     from src.api.routes.changes import router as changes_router
     from src.api.routes.project import router as project_router
@@ -120,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(agent_api_router)
     app.include_router(agent_bare_router, include_in_schema=False)
     app.include_router(ai_router)
+    app.include_router(ai_bare_router, include_in_schema=False)
     app.include_router(project_router)
     app.include_router(tools_router)
     app.include_router(sandbox_router)

@@ -103,3 +103,92 @@ class TestAiApiEndpoints:
             assert "Hello " in body
             assert "CoreMind!" in body
             assert "[DONE]" in body
+
+    def test_friendly_chat_endpoint_success(self, client: TestClient) -> None:
+        """Test dedicated friendly chat endpoint returns provider response."""
+        mock_response = AIResponse(content="Hi there! How can I help you today?", model="test-model")
+        with patch("src.api.routes.ai.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.name = "nebius"
+            mock_provider.chat = AsyncMock(return_value=mock_response)
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post(
+                "/v1/ai/chat/friendly",
+                json={"query": "Hello", "history": []},
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "ok"
+            assert data["response"] == "Hi there! How can I help you today?"
+            assert len(data["history"]) >= 2
+            assert data["history"][-1]["role"] == "assistant"
+
+    def test_friendly_chat_empty_query_rejected(self, client: TestClient) -> None:
+        """Test empty query is rejected with 422."""
+        res = client.post("/v1/ai/chat/friendly", json={"query": "   "})
+        assert res.status_code == 422
+
+    def test_friendly_chat_field_aliases(self, client: TestClient) -> None:
+        """Test accepting prompt alias instead of query."""
+        mock_response = AIResponse(content="I am doing great!", model="test-model")
+        with patch("src.api.routes.ai.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.name = "nebius"
+            mock_provider.chat = AsyncMock(return_value=mock_response)
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post(
+                "/v1/ai/chat",
+                json={"prompt": "how are you?", "messages": []},
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "ok"
+            assert data["response"] == "I am doing great!"
+
+    def test_friendly_chat_provider_error_handling(self, client: TestClient) -> None:
+        """Test provider error returns 502 with structured error."""
+        with patch("src.api.routes.ai.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.name = "nebius"
+            mock_provider.chat = AsyncMock(side_effect=RuntimeError("Rate limit exceeded"))
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post(
+                "/v1/ai/chat/friendly",
+                json={"query": "hello"},
+            )
+            assert res.status_code == 502
+            assert "Rate limit exceeded" in res.json()["detail"]
+
+    def test_friendly_chat_unprefixed_endpoint(self, client: TestClient) -> None:
+        """Test /ai/chat and /ai/chat/friendly without /v1 prefix work."""
+        mock_response = AIResponse(content="Greetings!", model="test-model")
+        with patch("src.api.routes.ai.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.name = "nebius"
+            mock_provider.chat = AsyncMock(return_value=mock_response)
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post("/ai/chat/friendly", json={"query": "hi"})
+            assert res.status_code == 200
+            assert res.json()["response"] == "Greetings!"
+
+    def test_friendly_chat_via_agent_run(self, client: TestClient) -> None:
+        """Test /v1/agent/run with friendly query returns response in payload."""
+        mock_response = AIResponse(content="Hello from agent friendly handler!", model="test-model")
+        with patch("src.ai.provider.get_ai_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.chat = AsyncMock(return_value=mock_response)
+            mock_get_provider.return_value = mock_provider
+
+            res = client.post(
+                "/v1/agent/run",
+                json={"task": "hello", "project_path": "."},
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "completed"
+            assert data["response"] == "Hello from agent friendly handler!"
+
