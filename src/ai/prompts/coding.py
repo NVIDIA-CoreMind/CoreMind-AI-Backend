@@ -15,6 +15,12 @@ Package Manager: {package_manager}
 Main Entry: {main_entry}
 Test Command: {test_command}
 
+## Architecture Rules
+- All code files must follow standard {language} directory conventions.
+- Place source modules in `src/` (or `lib/` for Flutter, `cmd/`/`internal/` for Go).
+- Never place loose business logic or flat files in the project root.
+- Keep components, services, and models in dedicated single-responsibility files.
+
 ## Files Changed So Far
 {files_changed}
 """

@@ -113,6 +113,28 @@ _DETECTION_RULES: list[tuple[str, ProjectInfo]] = [
             config_file="build.gradle",
         ),
     ),
+    (
+        "CMakeLists.txt",
+        ProjectInfo(
+            language="C/C++",
+            framework="CMake",
+            package_manager="cmake",
+            main_entry="src/main.cpp",
+            test_command="ctest",
+            config_file="CMakeLists.txt",
+        ),
+    ),
+    (
+        "composer.json",
+        ProjectInfo(
+            language="PHP",
+            framework="PHP",
+            package_manager="composer",
+            main_entry="public/index.php",
+            test_command="vendor/bin/phpunit",
+            config_file="composer.json",
+        ),
+    ),
 ]
 
 

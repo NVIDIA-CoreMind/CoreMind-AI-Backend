@@ -52,3 +52,15 @@ class TestProjectDetector:
         (tmp_path / "package.json").write_text('{"name": "test"}')
         info = detect_project(str(tmp_path))
         assert info.framework == "Flutter"
+
+    def test_detect_cmake(self, tmp_path: Path) -> None:
+        (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.10)")
+        info = detect_project(str(tmp_path))
+        assert info.language == "C/C++"
+        assert info.framework == "CMake"
+
+    def test_detect_php(self, tmp_path: Path) -> None:
+        (tmp_path / "composer.json").write_text('{"name": "test/app"}')
+        info = detect_project(str(tmp_path))
+        assert info.language == "PHP"
+

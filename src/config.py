@@ -32,7 +32,7 @@ class Settings(BaseSettings):
         description="Nebius Token Factory base URL",
     )
     nebius_model: str = Field(
-        default="nvidia/Nemotron-3_5-Lightning",
+        default="nvidia/Nemotron-3-Ultra-550b-a55b",
         description="Default NVIDIA Nemotron model ID",
     )
 
