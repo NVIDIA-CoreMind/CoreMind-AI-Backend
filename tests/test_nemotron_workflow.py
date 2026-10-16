@@ -79,7 +79,7 @@ class TestNemotronEndToEndWorkflow:
         sample_file.write_text("Nemotron lightning agent verified", encoding="utf-8")
 
         messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "Please read greeting.txt and tell me exactly what it says."}
+            {"role": "user", "content": "Read greeting.txt"}
         ]
 
         # Step 1: Model requests tool

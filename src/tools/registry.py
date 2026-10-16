@@ -162,7 +162,7 @@ def _register_all_tools(target: ToolRegistry) -> None:
     from src.tools.definitions.ask_question import ask_question_tool
     from src.tools.definitions.delete_file import delete_file_tool
     from src.tools.definitions.edit_file import edit_file_tool
-    from src.tools.definitions.flutter import flutter_check_env_tool
+    from src.tools.definitions.flutter import flutter_check_env_tool, flutter_create_project_tool
     from src.tools.definitions.get_diagnostics import get_diagnostics_tool
     from src.tools.definitions.git import (
         git_diff_tool,
@@ -218,6 +218,7 @@ def _register_all_tools(target: ToolRegistry) -> None:
         memory_recall_tool,
         memory_forget_tool,
         flutter_check_env_tool,
+        flutter_create_project_tool,
     ]:
         target.register(tool)
 

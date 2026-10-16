@@ -280,6 +280,18 @@ async def run_verification(
             test_command = "flutter test"
         elif (root / "package.json").exists():
             test_command = "npm test"
+        elif root.is_dir():
+            for sub in sorted(root.iterdir()):
+                if sub.is_dir() and not sub.name.startswith("."):
+                    if (sub / "pubspec.yaml").exists():
+                        test_command = f"cd {sub.name} && flutter analyze"
+                        break
+                    elif (sub / "package.json").exists():
+                        test_command = f"cd {sub.name} && npm test"
+                        break
+                    elif (sub / "pyproject.toml").exists() or (sub / "tests").is_dir():
+                        test_command = f"cd {sub.name} && pytest"
+                        break
 
     if not test_command:
         logger.warn("agent.verifier.no_test_command", project=project_path)

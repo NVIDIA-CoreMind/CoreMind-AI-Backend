@@ -82,15 +82,15 @@ class PermissionManager:
                 f"Network access is disabled for this session/project."
             )
              
-        # 3. Terminal Safety (specific checks for terminal command)
-        if tool_name == "terminal" and "command" in args:
+        # 3. Terminal & Sandbox Command Safety (specific checks for command execution)
+        if tool_name in ("terminal", "run_terminal", "sandbox_execute", "run_build", "run_tests") and "command" in args:
             classification = classify_command(args["command"])
             if classification == CommandClassification.DESTRUCTIVE:
                 # Always ask for destructive commands
                 return False
             if classification == CommandClassification.RISKY:
                 # Needs approval unless overridden by always allow
-                if self.tool_approvals.get("terminal") != ApprovalMode.ALWAYS_ALLOW:
+                if self.tool_approvals.get(tool_name) != ApprovalMode.ALWAYS_ALLOW:
                     return False
             if classification == CommandClassification.SAFE:
                 return True

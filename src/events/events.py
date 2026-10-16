@@ -31,6 +31,7 @@ class EventType(StrEnum):
     TASK_STARTED = "task.started"
     TASK_COMPLETED = "task.completed"
     TASK_STATUS = "task.status"
+    TASK_FAILED = "task.failed"
 
     # Tool events
     TOOL_STARTED = "tool.started"

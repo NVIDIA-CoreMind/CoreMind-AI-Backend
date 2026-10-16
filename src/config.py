@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     coremind_backend_port: int = Field(default=43110)
 
     # ── Agent Limits ────────────────────────────────────────────────
-    max_agent_steps: int = Field(default=20, ge=1, le=100)
+    max_agent_steps: int = Field(default=50, ge=1, le=100)
     default_command_timeout_ms: int = Field(default=120_000, ge=1000)
 
     # ── Limited Agent Memory ────────────────────────────────────────

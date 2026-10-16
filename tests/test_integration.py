@@ -4,6 +4,7 @@ End-to-End Integration Tests for CoreMind Backend.
 Tests complete agent lifecycle and all REST API endpoints.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 import pytest
@@ -146,3 +147,78 @@ class TestAgentCompleteLifecycle:
                 assert "calculator.py" in completed_task.files_changed
                 assert "return a + b" in code_file.read_text()
                 assert completed_task.task_graph.is_completed()
+
+    @pytest.mark.asyncio
+    async def test_multistep_creation_agent_workflow_does_not_terminate_early(self, tmp_path: Path) -> None:
+        """Verify that multi-step tasks continue through all roadmap items even when text responses are generated."""
+        task = AgentTask(
+            task_id="task_int_multi",
+            session_id="session_int_multi",
+            agent_id="agent_int_multi",
+            task="Create a new web app with modular components and entrypoint.",
+            project_path=str(tmp_path),
+        )
+
+        agent_loop = AgentLoop(task)
+
+        # Multi-turn sequence:
+        # Turn 1: write component file
+        # Turn 2: text response describing progress (previously would prematurely terminate here!)
+        # Turn 3: write main entrypoint file
+        # Turn 4: final completion text
+        responses = [
+            AIResponse(
+                content="I will scaffold the component first.",
+                tool_calls=[{
+                    "id": "tc_scaffold",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "todo_model.py", "content": "class Todo:\n    pass\n"}),
+                    },
+                }],
+            ),
+            AIResponse(
+                content="I have created the Todo model. Moving to wire the main entrypoint next.",
+            ),
+            AIResponse(
+                content="I will now write main.py.",
+                tool_calls=[{
+                    "id": "tc_main",
+                    "type": "function",
+                    "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "main.py", "content": "import todo_model\nprint('ready')\n"}),
+                    },
+                }],
+            ),
+            AIResponse(
+                content="The entire application structure and entrypoint have been created.",
+                finish_reason="stop",
+            ),
+        ]
+
+        with patch("src.agent.agent_loop.generate_task_graph") as mock_planner:
+            from src.agent.planner import _parse_task_graph_from_text
+            mock_planner.return_value = _parse_task_graph_from_text(None, task.task)
+
+            with patch.object(agent_loop._provider, "chat", AsyncMock(side_effect=responses)):
+                with patch("src.agent.agent_loop.run_verification") as mock_verify:
+                    from src.agent.verifier import VerificationResult
+                    mock_verify.return_value = VerificationResult(
+                        success=True,
+                        command="python main.py",
+                        exit_code=0,
+                        stdout="ready",
+                        stderr="",
+                    )
+
+                    completed_task = await agent_loop.run()
+
+                    assert completed_task.status == TaskStatus.COMPLETED
+                    assert "todo_model.py" in completed_task.files_changed
+                    assert "main.py" in completed_task.files_changed
+                    assert (tmp_path / "todo_model.py").exists()
+                    assert (tmp_path / "main.py").exists()
+                    assert completed_task.task_graph.is_completed()
+

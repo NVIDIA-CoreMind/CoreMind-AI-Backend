@@ -66,3 +66,137 @@ flutter_check_env_tool = ToolDefinition(
     permission=PermissionLevel.READ,
     executor=execute_flutter_check_env,
 )
+
+
+async def execute_flutter_create_project(
+    project_path: str,
+    project_name: str,
+    organization: str | None = None,
+    org: str | None = None,
+    platforms: Any = None,
+    description: str | None = None,
+    project_type: str | None = None,
+    template: str | None = None,
+    overwrite: bool = True,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    """Scaffold a new Flutter project cleanly."""
+    import json
+    from pathlib import Path
+
+    logger.info("tools.flutter_create_project.execute", project=project_name, cwd=project_path)
+
+    cmd_parts = ["flutter", "create", project_name]
+
+    # Organization
+    clean_org = org or organization or "com.example"
+    cmd_parts.extend(["--org", clean_org])
+
+    # Template
+    tmpl = template or project_type
+    if tmpl:
+        tmpl_clean = tmpl.lower()
+        if tmpl_clean in ("application", "app"):
+            cmd_parts.extend(["--template", "app"])
+        elif tmpl_clean in ("package", "plugin", "module"):
+            cmd_parts.extend(["--template", tmpl_clean])
+
+    # Platforms
+    if platforms:
+        if isinstance(platforms, str):
+            try:
+                parsed = json.loads(platforms)
+                if isinstance(parsed, list):
+                    cmd_parts.extend(["--platforms", ",".join(str(p).strip() for p in parsed)])
+                else:
+                    cmd_parts.extend(["--platforms", platforms.strip("[]\"' ")])
+            except Exception:
+                cmd_parts.extend(["--platforms", platforms.strip("[]\"' ")])
+        elif isinstance(platforms, (list, tuple)):
+            cmd_parts.extend(["--platforms", ",".join(str(p).strip() for p in platforms)])
+
+    if description:
+        cmd_parts.extend(["--description", f'"{description[:120]}"'])
+
+    if overwrite:
+        cmd_parts.append("--overwrite")
+
+    command_str = " ".join(cmd_parts)
+
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command_str,
+            cwd=project_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=120.0)
+        stdout = stdout_bytes.decode("utf-8", errors="ignore").strip()
+        stderr = stderr_bytes.decode("utf-8", errors="ignore").strip()
+
+        success = process.returncode == 0
+        project_dir = Path(project_path) / project_name
+        verified = project_dir.exists() and (project_dir / "pubspec.yaml").exists()
+
+        return {
+            "success": success,
+            "exit_code": process.returncode,
+            "command": command_str,
+            "project_name": project_name,
+            "project_dir": str(project_dir),
+            "main_entrypoint": f"{project_name}/lib/main.dart",
+            "instructions": (
+                f"Scaffolded Flutter project '{project_name}'. IMPORTANT: The template creates a default counter "
+                f"app at '{project_name}/lib/main.dart'. You MUST overwrite/write '{project_name}/lib/main.dart' "
+                f"with the user's requested application logic and UI using write_file. Do not stop until "
+                f"'{project_name}/lib/main.dart' has been updated with the actual implementation."
+            ),
+            "stdout": stdout,
+            "stderr": stderr,
+            "verified_on_disk": verified,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "command": command_str,
+        }
+
+
+flutter_create_project_tool = ToolDefinition(
+    name="flutter_create_project",
+    description=(
+        "Scaffold a new Flutter project structure with complete standard directories "
+        "(lib/, android/, ios/, web/, test/, pubspec.yaml). Use this to initialize new Flutter apps."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "project_name": {
+                "type": "string",
+                "description": "Name of the Flutter project to create (must be valid dart package name, e.g. todo_app)",
+            },
+            "organization": {
+                "type": "string",
+                "description": "Organization in reverse domain notation (default: com.example)",
+            },
+            "description": {
+                "type": "string",
+                "description": "Short description for the project pubspec.yaml",
+            },
+            "platforms": {
+                "type": "string",
+                "description": "Target platforms (e.g. 'android,ios,web,macos,windows,linux')",
+            },
+            "template": {
+                "type": "string",
+                "description": "Project template type: app (default), package, plugin, module",
+            },
+        },
+        "required": ["project_name"],
+    },
+    permission=PermissionLevel.EXECUTE,
+    executor=execute_flutter_create_project,
+    timeout_ms=120_000,
+)
+

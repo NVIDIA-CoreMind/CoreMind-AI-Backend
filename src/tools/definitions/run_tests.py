@@ -60,10 +60,13 @@ async def execute_run_tests(
     cmd = test_command or _detect_test_command(project_path, test_path)
     validate_command(cmd)
 
-    logger.info("tools.run_tests.start", command=cmd, cwd=project_path)
+    sess_id = _kwargs.get("session_id")
+    t_id = _kwargs.get("task_id") or agent_id
     await event_bus.emit(CoreMindEvent(
         type=EventType.VERIFICATION_STARTED,
         agent_id=agent_id,
+        session_id=sess_id,
+        task_id=t_id,
         data={"command": cmd, "attempt": 1},
     ))
 

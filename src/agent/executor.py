@@ -162,6 +162,8 @@ class AgentExecutor:
                         })
                         continue
                     is_approved = True
+                else:
+                    is_approved = True
 
                 # Execute the tool
                 result = await self._tool_executor.execute_tool_call(

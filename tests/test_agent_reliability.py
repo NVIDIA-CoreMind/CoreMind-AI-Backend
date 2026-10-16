@@ -447,3 +447,83 @@ class TestContractReconciliation:
                 await asyncio.sleep(0.05)
                 mock_stop.assert_awaited_with("task_ws_1")
 
+
+class TestEntrypointPreservationAndSubdirectoryDetection:
+    """Verify that entrypoint tasks require actual entrypoint files and subdirectories are detected."""
+
+    @pytest.mark.asyncio
+    async def test_entrypoint_task_not_completed_by_non_entrypoint_file(self, tmp_path: Path) -> None:
+        """Writing model or constants must not complete an entrypoint wiring task."""
+        from src.agent.task_graph import TaskGraph, TaskNodeStatus
+        from src.tools.definitions.write_file import execute_write_file
+
+        task = AgentTask(
+            task_id="task_entry_test_1",
+            session_id="sess_entry_1",
+            agent_id="agent_entry_1",
+            task="Build flutter app",
+            project_path=str(tmp_path),
+        )
+        loop = AgentLoop(task)
+
+        plan = TaskGraph(goal="Build flutter app")
+        plan.create_task("Scaffold", "Create project", task_id="t1")
+        plan.create_task("Implement models and services", "Create models", dependencies=["t1"], task_id="t2")
+        plan.create_task("Wire entrypoint and application configuration", "Wire main.dart", dependencies=["t2"], task_id="t3")
+
+        # Set t3 as in progress
+        plan.update_task("t1", status=TaskNodeStatus.COMPLETED)
+        plan.update_task("t2", status=TaskNodeStatus.COMPLETED)
+        plan.update_task("t3", status=TaskNodeStatus.IN_PROGRESS)
+        loop._task.task_graph = plan
+
+        write_model_resp = AIResponse(
+            content="",
+            tool_calls=[{
+                "id": "call_model",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "lib/models/todo.dart", "content": "class Todo {}\n"}),
+                },
+            }],
+        )
+        write_main_resp = AIResponse(
+            content="",
+            tool_calls=[{
+                "id": "call_main",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "lib/main.dart", "content": "void main() {}\n"}),
+                },
+            }],
+        )
+        final_resp = AIResponse(content="Done", finish_reason="stop")
+
+        with patch.object(loop._provider, "chat", AsyncMock(side_effect=[write_model_resp, write_main_resp, final_resp])):
+            with patch("src.agent.agent_loop.generate_task_graph", AsyncMock(return_value=plan)):
+                with patch("src.agent.agent_loop.run_verification") as mock_v:
+                    mock_v.return_value = VerificationResult(success=True, command="test", exit_code=0, stdout="", stderr="")
+                    res = await loop.run()
+
+                    assert res.status == TaskStatus.COMPLETED
+                    assert "lib/main.dart" in res.files_changed
+                    t3 = res.task_graph.get_task("t3")
+                    assert t3.status == TaskNodeStatus.COMPLETED
+
+    def test_detect_flutter_in_subdirectory(self, tmp_path: Path) -> None:
+        """Detect Flutter project when scaffolded in a subdirectory."""
+        from src.project.detector import detect_project
+        sub = tmp_path / "todo_app"
+        sub.mkdir()
+        (sub / "pubspec.yaml").write_text("name: todo_app\n")
+        (sub / "lib").mkdir()
+        (sub / "lib" / "main.dart").write_text("void main() {}\n")
+
+        info = detect_project(str(tmp_path))
+        assert info.language == "Dart"
+        assert info.framework == "Flutter"
+        assert info.main_entry == "todo_app/lib/main.dart"
+        assert "flutter" in info.test_command
+

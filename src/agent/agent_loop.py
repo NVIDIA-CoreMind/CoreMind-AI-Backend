@@ -36,6 +36,13 @@ from src.utils.logger import logger
 
 MAX_REPAIR_ATTEMPTS = 3
 
+ENTRYPOINT_KEYWORDS = ("entrypoint", "wire", "connect", "main")
+ENTRYPOINT_FILENAMES = (
+    "main.dart", "main.py", "app.py", "App.tsx", "App.jsx",
+    "main.tsx", "main.jsx", "index.ts", "index.js", "index.html",
+    "main.go", "main.rs", "page.tsx",
+)
+
 
 class AgentLoop:
     """The main agent execution engine."""
@@ -230,11 +237,12 @@ class AgentLoop:
                         consecutive_duplicate_turns = 0
                         last_tool_signatures = current_signatures
 
-                    if consecutive_duplicate_turns >= 2:
+                    if consecutive_duplicate_turns >= 1:
                         logger.warn(
                             "agent.loop.duplicate_tool_loop_prevented",
                             agent_id=self._task.agent_id,
                             tools=current_signatures,
+                            turns=consecutive_duplicate_turns,
                         )
                         if consecutive_duplicate_turns >= 3:
                             logger.warn(
@@ -248,7 +256,7 @@ class AgentLoop:
                                 tool_call_id=tc.get("id") or "call_dup",
                                 tool_name=tc.get("function", {}).get("name", "tool"),
                                 result=json.dumps({
-                                    "notice": "Duplicate tool call detected with identical arguments. Please synthesize existing findings or proceed to next steps."
+                                    "notice": "Duplicate tool call detected with identical arguments. This action was already completed. Do NOT repeat it or re-read it. Proceed to create the next file, write the main entrypoint (e.g. main.dart), or run verification."
                                 }),
                             )
                         messages = self._context.build_messages()
@@ -283,16 +291,22 @@ class AgentLoop:
                             inner_res = {}
 
                         if "error" not in inner_res and inner_res.get("verified_on_disk", False):
-                            f_path = inner_res.get("path") or ""
+                            f_path = inner_res.get("path") or inner_res.get("project_dir") or ""
                             if f_path and f_path not in self._task.files_changed:
                                 self._task.files_changed.append(f_path)
                                 self._context.record_file_changed(f_path)
                                 called_edit_tool = True
 
-                        if tool_nm in ("list_directory", "list_files", "read_file", "search_files", "search_code", "git_status", "git_log", "inspect_git", "get_diagnostics", "web_search"):
+                        if tool_nm in ("list_directory", "list_files", "read_file", "search_files", "search_code", "git_status", "git_log", "inspect_git", "get_diagnostics", "web_search", "flutter_check_env"):
                             called_inspection_tool = True
-                        elif tool_nm in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
+                        elif tool_nm in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build", "flutter_create_project"):
                             called_execution_tool = True
+
+                    # Check whether an entrypoint file was modified/created on disk
+                    has_entrypoint_edited = any(
+                        any(f.endswith(ep) for ep in ENTRYPOINT_FILENAMES)
+                        for f in self._task.files_changed
+                    )
 
                     # Progress task graph based on actions taken
                     if current_subtask_id:
@@ -300,24 +314,29 @@ class AgentLoop:
                         title_lower = (node.title if node else "").lower()
                         should_complete = False
 
-                        if called_edit_tool:
-                            should_complete = True
-                            # Also complete any other pending/in_progress implementation tasks
-                            for t in self._task.task_graph._tasks.values():
-                                if t.id != current_subtask_id and t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS) and any(
-                                    kw in t.title.lower() for kw in ("edit", "write", "create", "implement", "modify", "patch", "change", "code", "fix", "add")
-                                ):
-                                    self._task.task_graph.complete_task(t.id, result="Code modification executed")
-                                    await self._emit(
-                                        EventType.TASK_COMPLETED,
-                                        {"task_id": t.id, "title": t.title, "status": "completed"},
-                                    )
-                        elif called_inspection_tool and any(
-                            kw in title_lower for kw in ("inspect", "read", "locate", "search", "analyze", "explore", "examine", "find")
-                        ):
+                        is_entrypoint_node = any(kw in title_lower for kw in ENTRYPOINT_KEYWORDS)
+                        is_scaffold_node = any(kw in title_lower for kw in ("scaffold", "architecture", "directory", "structure", "folder", "manifest"))
+                        is_inspect_node = any(kw in title_lower for kw in ("inspect", "read", "locate", "search", "explore", "examine", "find", "check")) or ("analyze" in title_lower and not any(kw in title_lower for kw in ("verify", "test", "lint")))
+                        is_verify_node = any(kw in title_lower for kw in ("verify", "test", "lint")) and not is_inspect_node
+
+                        if is_entrypoint_node:
+                            # Entrypoint task ONLY completes if an actual entrypoint file was modified/created
+                            if has_entrypoint_edited:
+                                should_complete = True
+                        elif is_scaffold_node:
+                            if called_execution_tool or called_edit_tool:
+                                should_complete = True
+                        elif is_inspect_node:
+                            if called_inspection_tool or called_edit_tool:
+                                should_complete = True
+                        elif is_verify_node:
+                            if called_execution_tool:
+                                should_complete = True
+                        elif called_edit_tool:
+                            # Complete active component/model/service task on code edit
                             should_complete = True
                         elif called_execution_tool and any(
-                            kw in title_lower for kw in ("verify", "test", "run", "check", "build")
+                            kw in title_lower for kw in ("run", "build", "setup", "create", "init", "install", "command", "exec", "start", "config")
                         ):
                             should_complete = True
 
@@ -340,90 +359,112 @@ class AgentLoop:
                 if response.content:
                     self._task.response = response.content
 
-                # If modifications have already been verified on disk, proceed directly to verification
-                if self._task.files_changed:
-                    if current_subtask_id:
-                        node = self._task.task_graph.get_task(current_subtask_id)
-                        if node and node.status == TaskNodeStatus.IN_PROGRESS:
+                has_entrypoint_edited = any(
+                    any(f.endswith(ep) for ep in ENTRYPOINT_FILENAMES)
+                    for f in self._task.files_changed
+                )
+
+                # Complete current subtask if in progress (unless it is an unwritten entrypoint task)
+                if current_subtask_id:
+                    node = self._task.task_graph.get_task(current_subtask_id)
+                    is_entry_node = any(kw in (node.title if node else "").lower() for kw in ENTRYPOINT_KEYWORDS)
+                    if node and node.status == TaskNodeStatus.IN_PROGRESS:
+                        if not (is_entry_node and not has_entrypoint_edited):
                             self._task.task_graph.complete_task(
-                                current_subtask_id, result=response.content or "Completed file modifications"
+                                current_subtask_id, result=response.content or "Completed subtask"
                             )
                             await self._emit(
                                 EventType.TASK_COMPLETED,
-                                {"task_id": current_subtask_id, "title": node.title, "status": "completed"},
+                                {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
                             )
-                    break
 
                 pending_subtasks = [
                     t for t in self._task.task_graph._tasks.values()
                     if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS)
                 ]
 
-                # If all tasks are completed or graph completed: we are done
-                if not pending_subtasks or self._task.task_graph.is_completed():
-                    if current_subtask_id:
-                        node = self._task.task_graph.get_task(current_subtask_id)
-                        if node and node.status == TaskNodeStatus.IN_PROGRESS:
-                            self._task.task_graph.complete_task(
-                                current_subtask_id, result=response.content or "Completed without additional tool calls"
-                            )
-                            await self._emit(
-                                EventType.TASK_COMPLETED,
-                                {"task_id": current_subtask_id, "title": node.title if node else "", "status": "completed"},
-                            )
+                # Check if there are remaining pending action/implementation subtasks
+                action_kws = (
+                    "create", "edit", "write", "modify", "implement", "build", "patch", "fix", "add", "scaffold", "wire", "setup", "connect", "entrypoint"
+                )
+                pending_action_tasks = [
+                    t for t in pending_subtasks
+                    if any(kw in t.title.lower() for kw in action_kws)
+                ]
+
+                # Check if an entrypoint task was planned in the graph but has not yet been edited on disk
+                entrypoint_tasks_planned = [
+                    t for t in self._task.task_graph._tasks.values()
+                    if any(kw in t.title.lower() for kw in ENTRYPOINT_KEYWORDS)
+                ]
+                needs_entrypoint_write = bool(entrypoint_tasks_planned) and not has_entrypoint_edited
+
+                # If all action tasks are completed AND entrypoint requirement is satisfied, proceed to verification loop
+                if not pending_action_tasks and not needs_entrypoint_write:
                     break
 
-                # If there are pending action subtasks (e.g. creating/modifying code)
-                # and no files changed yet, and agent has not nudged twice: prompt to continue action
-                edit_kws = (
-                    "create", "edit", "write", "modify", "implement", "build", "patch", "fix", "add"
-                )
-                has_pending_actions = any(
-                    any(kw in t.title.lower() for kw in edit_kws)
-                    for t in pending_subtasks
-                )
-                if has_pending_actions and nudge_count < 2:
+                # If there are still pending action tasks or missing entrypoint, guide the agent to proceed
+                if nudge_count < 8:
                     nudge_count += 1
-                    next_node = pending_subtasks[0]
-                    logger.info(
-                        "agent.loop.nudge_action",
-                        agent_id=self._task.agent_id,
-                        nudge_count=nudge_count,
-                        next_subtask=next_node.title,
-                    )
-                    self._context.add_user_message(
-                        f"You provided a text explanation, but the task requires concrete actions:\n"
-                        f"- Next planned task: [{next_node.id}] {next_node.title}\n"
-                        f"Please proceed now using tools (`write_file`, `edit_file`, or `terminal`)."
-                    )
+                    if needs_entrypoint_write:
+                        entry_node = entrypoint_tasks_planned[0]
+                        if entry_node.status != TaskNodeStatus.IN_PROGRESS:
+                            self._task.task_graph.update_task(entry_node.id, status=TaskNodeStatus.IN_PROGRESS)
+                        logger.info(
+                            "agent.loop.nudge_missing_entrypoint",
+                            agent_id=self._task.agent_id,
+                            nudge_count=nudge_count,
+                            entrypoint_task=entry_node.title,
+                        )
+                        self._context.add_user_message(
+                            "CRITICAL STEP: The primary application entrypoint (e.g. `lib/main.dart`, `src/App.tsx`, or `main.py`) "
+                            "has NOT been written or replaced yet. CLI tools only generate placeholder templates. "
+                            "You MUST use `write_file` to write the complete application entrypoint file connecting your models, "
+                            "services, and screens into a working application now before proceeding."
+                        )
+                    else:
+                        next_node = pending_action_tasks[0]
+                        logger.info(
+                            "agent.loop.nudge_next_subtask",
+                            agent_id=self._task.agent_id,
+                            nudge_count=nudge_count,
+                            next_subtask=next_node.title,
+                        )
+                        self._context.add_user_message(
+                            f"Great progress. Now please proceed to the next planned task:\n"
+                            f"- Task [{next_node.id}]: {next_node.title}\n"
+                            f"{f'- Details: {next_node.description}' if next_node.description else ''}\n"
+                            f"Please execute the necessary actions now using tools (`write_file`, `create_file`, `edit_file`, or `terminal`). Continue until all tasks are fully accomplished."
+                        )
                     messages = self._context.build_messages()
                     continue
 
-                # Exhausted nudges: mark current in-progress task completed with explanation and exit
-                if current_subtask_id:
-                    node = self._task.task_graph.get_task(current_subtask_id)
-                    if node and node.status == TaskNodeStatus.IN_PROGRESS:
-                        finish_res = response.content or "Finished without additional tool calls"
-                        self._task.task_graph.complete_task(current_subtask_id, result=finish_res)
-                        await self._emit(
-                            EventType.TASK_COMPLETED,
-                            {
-                                "task_id": current_subtask_id,
-                                "title": node.title if node else "",
-                                "status": "completed",
-                            },
-                        )
+                # If maximum nudges reached, exit execution loop
                 break
 
             # Mark all remaining tasks completed if not failed, and emit TASK_COMPLETED so UI updates
-            for t in self._task.task_graph._tasks.values():
-                if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS):
-                    t.status = TaskNodeStatus.COMPLETED
-                    t.completed_at = datetime.now(UTC)
-                    await self._emit(
-                        EventType.TASK_COMPLETED,
-                        {"task_id": t.id, "title": t.title, "status": "completed"},
-                    )
+            if not self._stopped:
+                has_entrypoint_edited = any(
+                    any(f.endswith(ep) for ep in ENTRYPOINT_FILENAMES)
+                    for f in self._task.files_changed
+                )
+                for t in self._task.task_graph._tasks.values():
+                    if t.status in (TaskNodeStatus.PENDING, TaskNodeStatus.IN_PROGRESS):
+                        is_entry = any(kw in t.title.lower() for kw in ENTRYPOINT_KEYWORDS)
+                        if is_entry and not has_entrypoint_edited:
+                            t.status = TaskNodeStatus.FAILED
+                            t.error = "Entrypoint file was not created or modified before agent terminated"
+                            await self._emit(
+                                EventType.TASK_FAILED,
+                                {"task_id": t.id, "title": t.title, "error": t.error},
+                            )
+                        else:
+                            t.status = TaskNodeStatus.COMPLETED
+                            t.completed_at = datetime.now(UTC)
+                            await self._emit(
+                                EventType.TASK_COMPLETED,
+                                {"task_id": t.id, "title": t.title, "status": "completed"},
+                            )
 
             # Step 4: Verification Loop
             if self._task.files_changed and not self._stopped:
