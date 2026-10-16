@@ -10,7 +10,12 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from src.security.command_policy import CommandClassification, classify_command
+from src.security.command_policy import (
+    SHELL_TOOLS,
+    CommandClassification,
+    extract_commands,
+    worst_classification,
+)
 from src.security.permissions import requires_approval
 from src.tools.registry import PermissionLevel, ToolDefinition, tool_registry
 from src.utils.errors import ErrorCode, ToolError
@@ -82,18 +87,20 @@ class PermissionManager:
                 f"Network access is disabled for this session/project."
             )
              
-        # 3. Terminal & Sandbox Command Safety (specific checks for command execution)
-        if tool_name in ("terminal", "run_terminal", "sandbox_execute", "run_build", "run_tests") and "command" in args:
-            classification = classify_command(args["command"])
-            if classification == CommandClassification.DESTRUCTIVE:
-                # Always ask for destructive commands
-                return False
-            if classification == CommandClassification.RISKY:
-                # Needs approval unless overridden by always allow
-                if self.tool_approvals.get(tool_name) != ApprovalMode.ALWAYS_ALLOW:
+        # 3. Terminal & Sandbox Command Safety. Every command-like argument is checked, not only `command`.
+        if tool_name in SHELL_TOOLS:
+            commands = extract_commands(args)
+            if commands:
+                classification = worst_classification(commands)
+                if classification == CommandClassification.DESTRUCTIVE:
+                    # Always ask for destructive commands
                     return False
-            if classification == CommandClassification.SAFE:
-                return True
+                if classification == CommandClassification.RISKY:
+                    # Needs approval unless overridden by always allow
+                    if self.tool_approvals.get(tool_name) != ApprovalMode.ALWAYS_ALLOW:
+                        return False
+                else:
+                    return True
         
         # 4. Check global tool approval modes
         if tool_name in self.tool_approvals:

@@ -8,7 +8,7 @@ NEBIUS_API_KEY is never exposed to logs or API responses.
 """
 
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     )
 
     # ── Backend Server ──────────────────────────────────────────────
-    coremind_backend_host: str = Field(default="0.0.0.0")
+    # Loopback by default. Container deployments bind 0.0.0.0 explicitly (see Dockerfile).
+    coremind_backend_host: str = Field(default="127.0.0.1")
     coremind_backend_port: int = Field(default=43110)
 
     # ── Agent Limits ────────────────────────────────────────────────
@@ -72,15 +73,30 @@ class Settings(BaseSettings):
     # ── Sandbox ─────────────────────────────────────────────────────
     sandbox_type: str = Field(default="local", pattern=r"^(local|nebius)$")
     sandbox_working_dir: str = Field(default="")
+    # Direct execution endpoints (/v1/terminal/*, /v1/sandbox/*, and the tool execute, tests, build,
+    # and diagnostics routes) run commands on the host. They stay off unless this is set.
+    direct_execution_enabled: bool = Field(
+        default=False,
+        description="Enable direct command execution endpoints. Off by default.",
+    )
 
     # ── Authentication & JWT ────────────────────────────────────────
+    # Required. There is deliberately no default: a published default would let anyone forge tokens.
     jwt_secret_key: str = Field(
-        default="coremind-super-secret-jwt-key-2026-production-ready",
-        description="Secret key for signing CoreMind auth JWT tokens",
+        ...,
+        min_length=32,
+        description="Secret key for signing CoreMind auth JWT tokens. Set JWT_SECRET_KEY (32+ characters).",
     )
     jwt_algorithm: str = Field(default="HS256")
     jwt_access_token_expire_minutes: int = Field(default=60 * 24 * 7)  # 7 days
     jwt_refresh_token_expire_days: int = Field(default=30)
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def _reject_placeholder_secret(cls, value: str) -> str:
+        if value.startswith("change-this"):
+            raise ValueError("JWT_SECRET_KEY is still the .env.example placeholder. Set a random value.")
+        return value
 
     # ── Google OAuth ────────────────────────────────────────────────
     google_client_id: str = Field(

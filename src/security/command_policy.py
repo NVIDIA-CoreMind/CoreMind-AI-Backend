@@ -1,13 +1,22 @@
 """
 CoreMind Backend — Command Policy.
 
-Validates and filters shell commands before execution.
-Blocks dangerous commands that could harm the host system.
+Validates and classifies shell commands before execution.
+
+- validate_command() is a hard block for patterns that are never allowed.
+- classify_command() decides whether a command runs without approval:
+  SAFE runs directly, RISKY needs approval, DESTRUCTIVE is refused.
+  SAFE is an allowlist of read-only commands. Interpreters, test runners, package managers,
+  shell chaining, and paths outside the workspace are all RISKY.
 """
 
 from __future__ import annotations
 
 import re
+import shlex
+from collections.abc import Iterable, Mapping
+from enum import StrEnum
+from typing import Any
 
 from src.utils.errors import ErrorCode, ToolError
 from src.utils.logger import logger
@@ -33,30 +42,38 @@ BLOCKED_COMMANDS: list[re.Pattern[str]] = [
     re.compile(r">\s*/etc/", re.IGNORECASE),             # overwrite system files
 ]
 
-# Allowed command prefixes (safe by default)
-SAFE_PREFIXES = [
-    "python", "python3", "pip", "pip3",
-    "node", "npm", "npx", "yarn", "pnpm", "bun",
-    "dart", "flutter", "pub",
-    "cargo", "rustc",
-    "go", "go test", "go build",
-    "mvn", "gradle",
-    "git",
-    "cat", "head", "tail", "wc", "grep", "find", "ls", "echo",
-    "mkdir", "cd", "pwd", "touch", "cp", "mv", "which", "clear", "test", "dir",
-    "source", "export", "env",
-    "pytest", "ruff", "mypy", "black", "isort",
-    "jest", "vitest", "eslint", "tsc",
-    "make", "cmake",
-]
+# Tools whose arguments carry a shell command
+SHELL_TOOLS = frozenset({"terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"})
 
+# Argument names that can carry a command. Tools read different ones, so all of them are checked.
+COMMAND_ARG_KEYS = ("command", "cmd", "test_command", "build_command")
 
-from enum import StrEnum
+# Read-only programs that may run without approval
+SAFE_COMMANDS = frozenset({"cat", "head", "tail", "wc", "grep", "ls", "dir", "pwd", "echo", "which", "tree"})
+# Read-only git subcommands
+SAFE_GIT_SUBCOMMANDS = frozenset({"status", "diff", "log", "show"})
+# find options that run programs or delete files
+UNSAFE_FIND_ARGS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fls"})
+# Shell syntax that chains commands, substitutes output, or redirects
+SHELL_OPERATORS = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
+# Files that usually hold credentials
+SECRET_FILE_PATTERN = re.compile(
+    r"(^|/)(\.env(\..*)?|id_rsa.*|id_ed25519.*|.*\.(pem|key|p12|pfx)|credentials|secrets\.json)$"
+)
+
 
 class CommandClassification(StrEnum):
     SAFE = "safe"
     RISKY = "risky"
     DESTRUCTIVE = "destructive"
+
+
+_SEVERITY = {
+    CommandClassification.SAFE: 0,
+    CommandClassification.RISKY: 1,
+    CommandClassification.DESTRUCTIVE: 2,
+}
+
 
 def validate_command(command: str) -> None:
     """
@@ -75,8 +92,18 @@ def validate_command(command: str) -> None:
 
     logger.debug("security.command.allowed", command=command[:100])
 
+
+def _touches_outside_workspace_or_secrets(args: list[str]) -> bool:
+    for arg in args:
+        if arg.startswith(("/", "~")) or ".." in arg.split("/"):
+            return True
+        if SECRET_FILE_PATTERN.search(arg):
+            return True
+    return False
+
+
 def classify_command(command: str) -> CommandClassification:
-    """Classify a command into SAFE, RISKY, or DESTRUCTIVE, supporting chained commands."""
+    """Classify a command as SAFE (runs without approval), RISKY (needs approval), or DESTRUCTIVE (refused)."""
     raw = command.strip()
     if not raw:
         return CommandClassification.SAFE
@@ -84,34 +111,53 @@ def classify_command(command: str) -> CommandClassification:
     if any(pattern.search(command) for pattern in BLOCKED_COMMANDS):
         return CommandClassification.DESTRUCTIVE
 
-    # Split chained sub-commands (&&, ;, ||) and validate each part
-    subcommands = [s.strip() for s in re.split(r"&&|;|\|\|", raw) if s.strip()]
-    if not subcommands:
+    if SHELL_OPERATORS.search(raw):
+        # Chaining, substitution, and redirection can hide a second command.
+        return CommandClassification.RISKY
+
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        return CommandClassification.RISKY
+    if not tokens:
         return CommandClassification.SAFE
 
-    # Risky prefixes that require explicit approval
-    risky_prefixes = ["rm -rf", "rm -r", "kill", "pkill", "chmod", "chown", "apt", "apt-get", "yum", "dnf", "brew"]
-    network_commands = ["curl", "wget", "scp", "ssh", "ftp", "nc", "telnet"]
+    program, args = tokens[0], tokens[1:]
+    if "/" in program:
+        # A path to a program could be any binary, even one named like a safe command.
+        return CommandClassification.RISKY
+    if _touches_outside_workspace_or_secrets(args):
+        return CommandClassification.RISKY
 
-    for sub in subcommands:
-        if any(pattern.search(sub) for pattern in BLOCKED_COMMANDS):
-            return CommandClassification.DESTRUCTIVE
+    if program in SAFE_COMMANDS:
+        return CommandClassification.SAFE
+    if program == "find" and not UNSAFE_FIND_ARGS.intersection(args):
+        return CommandClassification.SAFE
+    if program == "git" and args and args[0] in SAFE_GIT_SUBCOMMANDS:
+        return CommandClassification.SAFE
+    return CommandClassification.RISKY
 
-        tokens = sub.split()
-        cmd = tokens[0] if tokens else ""
-
-        if any(sub.startswith(prefix) for prefix in risky_prefixes):
-            return CommandClassification.RISKY
-
-        if any(cmd == prefix for prefix in network_commands):
-            return CommandClassification.RISKY
-
-        is_sub_safe = any(cmd == prefix or cmd.startswith(prefix) or sub.startswith(prefix) for prefix in SAFE_PREFIXES)
-        if not is_sub_safe:
-            return CommandClassification.RISKY
-
-    return CommandClassification.SAFE
 
 def is_safe_command(command: str) -> bool:
     """Check if a command is classified as safe."""
     return classify_command(command) == CommandClassification.SAFE
+
+
+def extract_commands(args: Mapping[str, Any]) -> list[str]:
+    """Every command-like value in a tool call, whichever argument name carried it."""
+    found: list[str] = []
+    for key in COMMAND_ARG_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            found.append(value)
+    return found
+
+
+def worst_classification(commands: Iterable[str]) -> CommandClassification:
+    """The most severe classification among several commands. An empty list is SAFE."""
+    worst = CommandClassification.SAFE
+    for command in commands:
+        current = classify_command(command)
+        if _SEVERITY[current] > _SEVERITY[worst]:
+            worst = current
+    return worst

@@ -14,25 +14,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from src.auth.models import User
 from src.auth.security import decode_token
 from src.auth.storage import user_storage
-from src.utils.errors import AuthError, ErrorCode
+from src.config import settings
+from src.utils.errors import AuthError, CoreMindError, ErrorCode
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-) -> User:
+def resolve_user_from_token(token: str) -> User:
     """
-    Validate the Bearer token in the Authorization header.
-    Returns the authenticated User model.
+    Validates an access token and returns the user it belongs to.
+    Raises AuthError when the token or its user is not acceptable.
     """
-    if credentials is None:
-        raise AuthError(
-            ErrorCode.AUTH_UNAUTHORIZED,
-            "Missing Authorization Bearer token header.",
-        )
-
-    token = credentials.credentials
     payload = decode_token(token, expected_type="access")
     user_id = payload.get("sub")
     if not user_id:
@@ -54,6 +46,21 @@ async def get_current_user(
     return user
 
 
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> User:
+    """
+    Validate the Bearer token in the Authorization header.
+    Returns the authenticated User model.
+    """
+    if credentials is None:
+        raise AuthError(
+            ErrorCode.AUTH_UNAUTHORIZED,
+            "Missing Authorization Bearer token header.",
+        )
+    return resolve_user_from_token(credentials.credentials)
+
+
 async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
@@ -71,6 +78,16 @@ async def get_current_admin_user(
             "Administrator privileges required for this action.",
         )
     return current_user
+
+
+async def require_direct_execution() -> None:
+    """Refuses direct command execution endpoints unless DIRECT_EXECUTION_ENABLED is set."""
+    if not settings.direct_execution_enabled:
+        raise CoreMindError(
+            ErrorCode.TOOL_PERMISSION_DENIED,
+            "Direct command execution is disabled on this backend. Set DIRECT_EXECUTION_ENABLED=true to enable it.",
+            status_code=403,
+        )
 
 
 async def get_optional_user(

@@ -12,13 +12,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from src.auth.dependencies import require_direct_execution
 from src.tools.executor import ToolExecutor
 from src.utils.logger import logger
 
 router = APIRouter(prefix="/v1/tools", tags=["tools"])
+
+# Routes below run shell commands or project tooling on the host (see DIRECT_EXECUTION_ENABLED).
+_EXECUTION_GATE = [Depends(require_direct_execution)]
 
 tool_executor = ToolExecutor()
 
@@ -101,7 +105,7 @@ async def apply_diff_endpoint(request: ToolRequest) -> dict[str, Any]:
     return result
 
 
-@router.post("/tests")
+@router.post("/tests", dependencies=_EXECUTION_GATE)
 async def run_tests_endpoint(request: ToolRequest) -> dict[str, Any]:
     """Run tests for the project."""
     logger.info("api.tools.run_tests", project=request.project_path)
@@ -113,7 +117,7 @@ async def run_tests_endpoint(request: ToolRequest) -> dict[str, Any]:
     return result
 
 
-@router.post("/build")
+@router.post("/build", dependencies=_EXECUTION_GATE)
 async def run_build_endpoint(request: ToolRequest) -> dict[str, Any]:
     """Run project build command."""
     logger.info("api.tools.run_build", project=request.project_path)
@@ -125,7 +129,7 @@ async def run_build_endpoint(request: ToolRequest) -> dict[str, Any]:
     return result
 
 
-@router.post("/diagnostics")
+@router.post("/diagnostics", dependencies=_EXECUTION_GATE)
 async def get_diagnostics_endpoint(request: ToolRequest) -> dict[str, Any]:
     """Retrieve diagnostics for a file or workspace."""
     logger.info("api.tools.get_diagnostics", project=request.project_path)
@@ -137,7 +141,7 @@ async def get_diagnostics_endpoint(request: ToolRequest) -> dict[str, Any]:
     return result
 
 
-@router.post("/execute")
+@router.post("/execute", dependencies=_EXECUTION_GATE)
 async def execute_tool_endpoint(request: ToolRequest) -> dict[str, Any]:
     """Execute any schema-validated tool by name."""
     logger.info("api.tools.execute", tool=request.tool, project=request.project_path)

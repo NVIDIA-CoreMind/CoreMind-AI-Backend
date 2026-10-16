@@ -17,7 +17,13 @@ from src.changes.review import change_review_manager
 from src.events.event_bus import event_bus
 from src.events.events import CoreMindEvent, EventType
 from src.security.approval_manager import approval_manager
-from src.security.command_policy import validate_command
+from src.security.command_policy import (
+    SHELL_TOOLS,
+    CommandClassification,
+    extract_commands,
+    validate_command,
+    worst_classification,
+)
 from src.security.permissions import requires_approval
 from src.tools.executor import ToolExecutor
 from src.tools.registry import tool_registry
@@ -103,15 +109,14 @@ class AgentExecutor:
                 tool_def = tool_registry.get(tool_name)
                 canonical_name = tool_def.name
 
-                # Check command validation
-                if canonical_name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
-                    command = args.get("command") or args.get("test_command") or args.get("build_command") or ""
-                    if command:
-                        validate_command(command)
-                        await self._emit(EventType.COMMAND_STARTED, {
-                            "command": command,
-                            "cwd": self._project_path,
-                        })
+                # Check command validation on every command-like argument (SEC-04)
+                shell_commands = extract_commands(args) if canonical_name in SHELL_TOOLS else []
+                for command in shell_commands:
+                    validate_command(command)
+                    await self._emit(EventType.COMMAND_STARTED, {
+                        "command": command,
+                        "cwd": self._project_path,
+                    })
 
                 # Checkpoint backup before file modification
                 if canonical_name in ("write_file", "create_file", "edit_file", "patch_file", "apply_diff", "delete_file") and self._checkpoint:
@@ -122,12 +127,9 @@ class AgentExecutor:
                 # Check if tool requires approval
                 needs_approval = requires_approval(tool_def.permission) or canonical_name == "delete_file"
 
-                # Dynamically require approval for unsafe terminal commands
-                if canonical_name in ("terminal", "run_terminal", "sandbox_execute"):
-                    from src.security.command_policy import is_safe_command
-                    command = args.get("command", "")
-                    if command and not is_safe_command(command):
-                        needs_approval = True
+                # Shell tools need approval when any command they carry is not clearly safe
+                if shell_commands and worst_classification(shell_commands) != CommandClassification.SAFE:
+                    needs_approval = True
 
                 is_approved = False
                 if needs_approval:
