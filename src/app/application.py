@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import get_current_user, require_direct_execution
 from src.config import settings
 from src.utils.errors import CoreMindError
 from src.utils.logger import logger
@@ -117,6 +117,8 @@ def create_app() -> FastAPI:
 
     # Every router except auth requires a valid Bearer token. The WebSocket checks its own token.
     gated = [Depends(get_current_user)]
+    # Routes that run commands on the host also need DIRECT_EXECUTION_ENABLED (see config.py).
+    executing = [*gated, Depends(require_direct_execution)]
 
     # Mount v1 API routes
     app.include_router(auth_router)
@@ -127,16 +129,16 @@ def create_app() -> FastAPI:
     app.include_router(ai_bare_router, include_in_schema=False, dependencies=gated)
     app.include_router(project_router, dependencies=gated)
     app.include_router(tools_router, dependencies=gated)
-    app.include_router(sandbox_router, dependencies=gated)
+    app.include_router(sandbox_router, dependencies=executing)
     app.include_router(settings_router, dependencies=gated)
     app.include_router(changes_router, dependencies=gated)
-    app.include_router(terminal_router, dependencies=gated)
+    app.include_router(terminal_router, dependencies=executing)
     app.include_router(ws_router)
     app.include_router(ws_router, prefix="/v1", include_in_schema=False)
 
     # Mount convenient aliases without /v1 prefix for desktop client flexibility
     app.include_router(project_router, prefix="", include_in_schema=False, dependencies=gated)
     app.include_router(changes_router, prefix="", include_in_schema=False, dependencies=gated)
-    app.include_router(terminal_router, prefix="", include_in_schema=False, dependencies=gated)
+    app.include_router(terminal_router, prefix="", include_in_schema=False, dependencies=executing)
 
     return app

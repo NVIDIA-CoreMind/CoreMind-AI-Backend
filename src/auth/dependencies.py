@@ -14,7 +14,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from src.auth.models import User
 from src.auth.security import decode_token
 from src.auth.storage import user_storage
-from src.utils.errors import AuthError, ErrorCode
+from src.config import settings
+from src.utils.errors import AuthError, CoreMindError, ErrorCode
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -77,6 +78,16 @@ async def get_current_admin_user(
             "Administrator privileges required for this action.",
         )
     return current_user
+
+
+async def require_direct_execution() -> None:
+    """Refuses direct command execution endpoints unless DIRECT_EXECUTION_ENABLED is set."""
+    if not settings.direct_execution_enabled:
+        raise CoreMindError(
+            ErrorCode.TOOL_PERMISSION_DENIED,
+            "Direct command execution is disabled on this backend. Set DIRECT_EXECUTION_ENABLED=true to enable it.",
+            status_code=403,
+        )
 
 
 async def get_optional_user(

@@ -5,6 +5,10 @@ with a stub user. Tests marked ``real_auth`` run against the real token checks.
 """
 
 import os
+import tempfile
+
+# Tests never touch a real database. Forced, not defaulted, so a developer's .env cannot redirect it.
+os.environ["SQLITE_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="coremind-tests-"), "coremind.db")
 
 # Settings require a signing key. This value only exists inside the test process.
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-signing-key-do-not-use-in-production-0123456789")

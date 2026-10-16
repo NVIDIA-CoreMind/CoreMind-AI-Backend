@@ -13,6 +13,7 @@ Endpoints:
 
 from __future__ import annotations
 
+from html import escape as html_escape
 import threading
 import time
 from typing import Annotated, Any
@@ -82,6 +83,8 @@ class OAuthSessionCache:
 
 
 oauth_session_store = OAuthSessionCache()
+# States issued by /v1/auth/google/url. A callback completes a sign-in only for a state issued here, once.
+oauth_pending_states = OAuthSessionCache()
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -101,7 +104,20 @@ async def get_google_auth_url(
     redirect_uri: str | None = Query(default=None, description="Custom redirect URI"),
 ) -> GoogleAuthUrlResponse:
     """Retrieve the Google OAuth2 consent URL for browser or webview sign-in."""
-    return auth_service.get_google_auth_url(state=state, redirect_uri=redirect_uri)
+    result = auth_service.get_google_auth_url(state=state, redirect_uri=redirect_uri)
+    oauth_pending_states.set(result.state, {"issued": True}, ttl_seconds=600)
+    return result
+
+
+def _callback_error_page(message: str) -> str:
+    return (
+        "<!DOCTYPE html><html><head><title>Authentication Error</title></head>"
+        "<body style='background:#0F172A;color:#EF4444;font-family:sans-serif;"
+        "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'>"
+        "<div style='text-align:center;background:#1E293B;padding:40px;border-radius:16px;border:1px solid #334155;'>"
+        f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Error</h2><p style='color:#94A3B8;'>{html_escape(message)}</p>"
+        "<a href='/auth' style='color:#3B82F6;'>Return to Sign In</a></div></body></html>"
+    )
 
 
 @router.get("/google/callback")
@@ -122,7 +138,7 @@ async def google_callback(
             "<body style='background:#0F172A;color:#EF4444;font-family:sans-serif;"
             "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'>"
             "<div style='text-align:center;background:#1E293B;padding:40px;border-radius:16px;border:1px solid #334155;'>"
-            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Failed</h2><p style='color:#94A3B8;'>{error}</p>"
+            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Failed</h2><p style='color:#94A3B8;'>{html_escape(error)}</p>"
             "<a href='/auth' style='color:#3B82F6;'>Return to Sign In</a></div></body></html>"
         )
         return HTMLResponse(html, status_code=400)
@@ -130,15 +146,26 @@ async def google_callback(
     if not code:
         return JSONResponse({"error": "No authorization code provided by Google"}, status_code=400)
 
+    # Only a state this backend issued, and has not used yet, may complete a sign-in.
+    if not state or oauth_pending_states.pop(state) is None:
+        return HTMLResponse(
+            _callback_error_page("This sign-in link has expired or was not started by CoreMind."),
+            status_code=400,
+        )
+
     try:
         token_response = await auth_service.google_auth(GoogleAuthRequest(code=code))
-        token_json = token_response.model_dump_json()
         token_dict = token_response.model_dump()
 
-        # Cache session keyed by state for 5-10 minutes so the desktop IDE can retrieve it
-        if state:
-            oauth_session_store.set(state, token_dict, ttl_seconds=600)
-        oauth_session_store.set("latest", token_dict, ttl_seconds=600)
+        # Held for 10 minutes and handed out once to the client that knows this state (see get_session).
+        oauth_session_store.set(state, token_dict, ttl_seconds=600)
+        # Copy for the sign-in portal at /auth. JSON-escaped so no value can close the script block.
+        auth_js = (
+            token_response.model_dump_json()
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
 
         html = f"""<!DOCTYPE html>
 <html>
@@ -151,14 +178,12 @@ async def google_callback(
     <script>
       if (window.opener) {{
         try {{
-          window.opener.postMessage({{
-            type: 'COREMIND_AUTH_SUCCESS',
-            token: {token_json}
-          }}, '*');
+          // No token here. Desktop clients fetch it from /v1/auth/session with their state value.
+          window.opener.postMessage({{ type: 'COREMIND_AUTH_SUCCESS' }}, '*');
         }} catch (e) {{}}
       }}
       try {{
-        localStorage.setItem('coremind_auth', JSON.stringify({token_json}));
+        localStorage.setItem('coremind_auth', JSON.stringify({auth_js}));
       }} catch (e) {{}}
     </script>
   </body>
@@ -171,7 +196,7 @@ async def google_callback(
             "<body style='background:#0F172A;color:#EF4444;font-family:sans-serif;"
             "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;'>"
             "<div style='text-align:center;background:#1E293B;padding:40px;border-radius:16px;border:1px solid #334155;'>"
-            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Error</h2><p style='color:#94A3B8;'>{exc}</p>"
+            f"<h2 style='color:#EF4444;margin-bottom:8px;'>Authentication Error</h2><p style='color:#94A3B8;'>{html_escape(str(exc))}</p>"
             "<a href='/auth' style='color:#3B82F6;'>Return to Sign In</a></div></body></html>"
         )
         return HTMLResponse(err_html, status_code=400)
@@ -183,8 +208,13 @@ async def get_session(state: str | None = Query(default=None)) -> Any:
     Desktop polling endpoint to check if Google sign-in finished in Chrome.
     Returns AuthTokens schema if authenticated, or 404 pending status.
     """
-    key = state or "latest"
-    session_data = oauth_session_store.get(key)
+    if not state:
+        return JSONResponse(
+            {"error": {"code": "AUTH_UNAUTHORIZED", "message": "A state value from /v1/auth/google/url is required."}},
+            status_code=400,
+        )
+    # Tokens are handed out once, to the client that holds the state value. There is no "latest" fallback.
+    session_data = oauth_session_store.pop(state)
     if session_data:
         return TokenResponse(**session_data)
     return JSONResponse({"status": "pending"}, status_code=404)

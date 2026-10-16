@@ -116,7 +116,7 @@ async def execute_flutter_create_project(
             cmd_parts.extend(["--platforms", ",".join(str(p).strip() for p in platforms)])
 
     if description:
-        cmd_parts.extend(["--description", f'"{description[:120]}"'])
+        cmd_parts.extend(["--description", description[:120]])
 
     if overwrite:
         cmd_parts.append("--overwrite")
@@ -124,8 +124,9 @@ async def execute_flutter_create_project(
     command_str = " ".join(cmd_parts)
 
     try:
-        process = await asyncio.create_subprocess_shell(
-            command_str,
+        # Argument list, not a shell string: user-supplied names and descriptions are never parsed by a shell (SEC-02)
+        process = await asyncio.create_subprocess_exec(
+            *cmd_parts,
             cwd=project_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -12,6 +12,7 @@ from typing import Any
 
 from src.config import settings
 from src.sandbox.provider import SandboxProvider
+from src.security.command_policy import validate_command
 from src.utils.errors import ErrorCode, SandboxError
 from src.utils.ids import sandbox_id as gen_sandbox_id
 from src.utils.logger import logger
@@ -54,6 +55,9 @@ class LocalSandboxProvider(SandboxProvider):
         sandbox = self._sandboxes.get(sandbox_id)
         if sandbox is None:
             raise SandboxError(ErrorCode.SANDBOX_UNAVAILABLE, f"Sandbox not found: {sandbox_id}")
+
+        # The denylist applies on every execution path, including sandbox routes and verification (SEC-02)
+        validate_command(command)
 
         project_path = sandbox["project_path"]
         timeout = (timeout_ms or settings.default_command_timeout_ms) / 1000

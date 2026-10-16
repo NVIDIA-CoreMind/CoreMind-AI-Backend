@@ -62,7 +62,7 @@ The frontend can authenticate using either:
    - Call `GET /v1/auth/google/url` to retrieve the Google OAuth URL.
    - Open in an Electron `BrowserWindow` or external browser.
    - The user completes sign-in, Google redirects to `/v1/auth/google/callback`.
-   - The callback page automatically dispatches a message via `window.opener.postMessage` with the token payload and writes to `localStorage.getItem('coremind_auth')`.
+   - The callback page writes the token payload to `localStorage.getItem('coremind_auth')` (same origin, for the `/auth` portal) and posts `{type: 'COREMIND_AUTH_SUCCESS'}` to `window.opener` **without a token**. Fetch tokens with `GET /v1/auth/session?state=<state>` using the same state you passed to `/v1/auth/google/url`. The tokens are returned once, and the endpoint returns 404 while the sign-in is pending.
 2. **Direct Google ID Token** (If using Google Identity Services / One-Tap SDK in renderer):
    - POST the raw Google JWT ID token directly to `POST /v1/auth/google`.
 

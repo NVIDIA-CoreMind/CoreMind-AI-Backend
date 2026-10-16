@@ -225,6 +225,10 @@ def test_api_google_callback_and_session_polling(client: TestClient):
     """Test Google callback and desktop session polling flow."""
     test_state = "desktop-session-state-7788"
 
+    # 0. The client starts sign-in with a state value; the callback only accepts states issued here
+    issued = client.get("/v1/auth/google/url", params={"state": test_state})
+    assert issued.status_code == 200
+
     # 1. Polling before callback should return 404 pending
     pending_res = client.get("/v1/auth/session", params={"state": test_state})
     assert pending_res.status_code == 404

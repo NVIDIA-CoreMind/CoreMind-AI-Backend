@@ -20,6 +20,10 @@ from src.utils.logger import logger
 
 from src.security.permission_manager import permission_manager, AgentMode
 
+# Keyword arguments the executor sets itself. Tool arguments with these names are ignored.
+_EXECUTOR_OWNED_ARGS = frozenset({"project_path", "agent_id", "session_id", "agent_task_id"})
+
+
 class ToolExecutor:
     """Executes tool calls with security checks and timeouts."""
 
@@ -105,7 +109,8 @@ class ToolExecutor:
             if task_id is not None and "task_id" not in args:
                 exec_kwargs["task_id"] = task_id
             exec_kwargs["agent_task_id"] = task_id
-            exec_kwargs.update(args)
+            # Tool arguments may not replace the values the executor sets (SEC-05)
+            exec_kwargs.update({k: v for k, v in args.items() if k not in _EXECUTOR_OWNED_ARGS})
 
             result = await asyncio.wait_for(
                 tool.executor(**exec_kwargs),

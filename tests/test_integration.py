@@ -55,7 +55,14 @@ class TestApiEndpoints:
         assert res_map.status_code == 200
         assert "summary" in res_map.json()
 
-    def test_terminal_session_api(self, api_client: TestClient, tmp_path: Path) -> None:
+    def test_terminal_session_api(
+        self, api_client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Direct execution is off by default (DIRECT_EXECUTION_ENABLED); this test opts in for its own duration.
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "direct_execution_enabled", True)
+
         # Create session
         res = api_client.post("/v1/terminal/session", json={"project_path": str(tmp_path)})
         assert res.status_code == 200
