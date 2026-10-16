@@ -113,6 +113,28 @@ _DETECTION_RULES: list[tuple[str, ProjectInfo]] = [
             config_file="build.gradle",
         ),
     ),
+    (
+        "CMakeLists.txt",
+        ProjectInfo(
+            language="C/C++",
+            framework="CMake",
+            package_manager="cmake",
+            main_entry="src/main.cpp",
+            test_command="ctest",
+            config_file="CMakeLists.txt",
+        ),
+    ),
+    (
+        "composer.json",
+        ProjectInfo(
+            language="PHP",
+            framework="PHP",
+            package_manager="composer",
+            main_entry="public/index.php",
+            test_command="vendor/bin/phpunit",
+            config_file="composer.json",
+        ),
+    ),
 ]
 
 
@@ -126,6 +148,25 @@ def detect_project(project_path: str) -> ProjectInfo:
             if config_file == "package.json":
                 return _refine_node_project(root, info)
             return info
+
+    # Check immediate subdirectories if root has no direct config file (e.g. Flutter scaffolded in subdir)
+    if root.is_dir():
+        for subdir in sorted(root.iterdir()):
+            if subdir.is_dir() and not subdir.name.startswith("."):
+                for config_file, info in _DETECTION_RULES:
+                    if (subdir / config_file).exists():
+                        sub_info = _refine_node_project(subdir, info) if config_file == "package.json" else info
+                        rel_main = f"{subdir.name}/{sub_info.main_entry}" if sub_info.main_entry else ""
+                        rel_config = f"{subdir.name}/{sub_info.config_file}"
+                        test_cmd = f"cd {subdir.name} && {sub_info.test_command}" if sub_info.test_command else ""
+                        return ProjectInfo(
+                            language=sub_info.language,
+                            framework=sub_info.framework,
+                            package_manager=sub_info.package_manager,
+                            main_entry=rel_main,
+                            test_command=test_cmd,
+                            config_file=rel_config,
+                        )
 
     return ProjectInfo(
         language="Unknown",

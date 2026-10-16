@@ -24,11 +24,21 @@ _FRIENDLY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^\s*tell\s+me\s+(a\s+)?joke\s*[!.?]*\s*$", re.IGNORECASE),
 ]
 
+# Patterns that strongly indicate a live web search or external information request
+_SEARCH_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(search|browse|google|bing|tavily|duckduckgo)\b", re.IGNORECASE),
+    re.compile(r"\b(look\s*up|find\s+out|find)\b.*\b(on\s+(the\s+)?(web|internet)|online|profile|github|linkedin)\b", re.IGNORECASE),
+    re.compile(r"\b(on\s+(the\s+)?(web|internet)|online)\b", re.IGNORECASE),
+    re.compile(r"\b(web\s*search|live\s*search)\b", re.IGNORECASE),
+    re.compile(r"\b(latest|current|real-?time|trending)\b", re.IGNORECASE),
+    re.compile(r"^\s*who\s+(is|was|are)\s+(?!you\b)", re.IGNORECASE),
+]
+
 # Patterns that strongly indicate an INFORMATIONAL / CONVERSATIONAL query (direct fast response)
 _FAST_INFO_PREFIXES = (
     "what is", "what are", "what's", "how does", "how do i", "how to", "why is",
     "why does", "explain", "tell me about", "describe", "difference between",
-    "can you explain", "give me an example", "who is", "who are", "define",
+    "can you explain", "give me an example", "define",
 )
 
 # Workspace action verbs that require the full AgentLoop (modifying project, running commands)
@@ -50,6 +60,26 @@ class IntentDetector:
     """Fast intent classification — no LLM call required."""
 
     @staticmethod
+    def is_search_query(query: str) -> bool:
+        """
+        Determine if the user query is asking for live web search,
+        online lookup, or real-time external information.
+        """
+        stripped = query.strip()
+        if not stripped:
+            return False
+
+        q_lower = stripped.lower()
+        if any(kw in q_lower for kw in ("search", "browse", "tavily", "google", "duckduckgo", "on the web", "on web", "live search", "trending")):
+            return True
+
+        for pattern in _SEARCH_PATTERNS:
+            if pattern.search(stripped):
+                return True
+
+        return False
+
+    @staticmethod
     async def is_friendly_chat(query: str) -> bool:
         """
         Determine if the user query is a conversational or informational prompt
@@ -63,6 +93,11 @@ class IntentDetector:
         if len(stripped) < 3:
             logger.info("ai.intent_detector", query=stripped[:50], intent="FRIENDLY")
             return True
+
+        # Any query requesting live web search or real-time info MUST NOT be tool-less friendly chat
+        if IntentDetector.is_search_query(stripped):
+            logger.info("ai.intent_detector", query=stripped[:50], intent="SEARCH")
+            return False
 
         # Check friendly patterns first (exact match on short inputs)
         for pattern in _FRIENDLY_PATTERNS:

@@ -36,13 +36,15 @@ BLOCKED_COMMANDS: list[re.Pattern[str]] = [
 # Allowed command prefixes (safe by default)
 SAFE_PREFIXES = [
     "python", "python3", "pip", "pip3",
-    "node", "npm", "npx", "yarn", "pnpm",
+    "node", "npm", "npx", "yarn", "pnpm", "bun",
     "dart", "flutter", "pub",
     "cargo", "rustc",
     "go", "go test", "go build",
     "mvn", "gradle",
     "git",
     "cat", "head", "tail", "wc", "grep", "find", "ls", "echo",
+    "mkdir", "cd", "pwd", "touch", "cp", "mv", "which", "clear", "test", "dir",
+    "source", "export", "env",
     "pytest", "ruff", "mypy", "black", "isort",
     "jest", "vitest", "eslint", "tsc",
     "make", "cmake",
@@ -74,30 +76,42 @@ def validate_command(command: str) -> None:
     logger.debug("security.command.allowed", command=command[:100])
 
 def classify_command(command: str) -> CommandClassification:
-    """Classify a command into SAFE, RISKY, or DESTRUCTIVE."""
-    cmd = command.strip().split()[0] if command.strip() else ""
-    if not cmd:
+    """Classify a command into SAFE, RISKY, or DESTRUCTIVE, supporting chained commands."""
+    raw = command.strip()
+    if not raw:
         return CommandClassification.SAFE
 
     if any(pattern.search(command) for pattern in BLOCKED_COMMANDS):
         return CommandClassification.DESTRUCTIVE
 
-    # Potentially risky commands that need approval
-    risky_prefixes = ["rm", "mv", "cp", "kill", "pkill", "chmod", "chown", "apt", "apt-get", "yum", "dnf", "brew"]
-    if any(cmd.startswith(prefix) for prefix in risky_prefixes):
-        return CommandClassification.RISKY
-
-    # Network-related
-    network_commands = ["curl", "wget", "scp", "ssh", "ftp", "nc", "telnet"]
-    if any(cmd.startswith(prefix) for prefix in network_commands):
-        return CommandClassification.RISKY
-
-    if any(cmd.startswith(prefix) for prefix in SAFE_PREFIXES):
+    # Split chained sub-commands (&&, ;, ||) and validate each part
+    subcommands = [s.strip() for s in re.split(r"&&|;|\|\|", raw) if s.strip()]
+    if not subcommands:
         return CommandClassification.SAFE
 
-    # Unknown commands are considered risky by default
-    return CommandClassification.RISKY
+    # Risky prefixes that require explicit approval
+    risky_prefixes = ["rm -rf", "rm -r", "kill", "pkill", "chmod", "chown", "apt", "apt-get", "yum", "dnf", "brew"]
+    network_commands = ["curl", "wget", "scp", "ssh", "ftp", "nc", "telnet"]
+
+    for sub in subcommands:
+        if any(pattern.search(sub) for pattern in BLOCKED_COMMANDS):
+            return CommandClassification.DESTRUCTIVE
+
+        tokens = sub.split()
+        cmd = tokens[0] if tokens else ""
+
+        if any(sub.startswith(prefix) for prefix in risky_prefixes):
+            return CommandClassification.RISKY
+
+        if any(cmd == prefix for prefix in network_commands):
+            return CommandClassification.RISKY
+
+        is_sub_safe = any(cmd == prefix or cmd.startswith(prefix) or sub.startswith(prefix) for prefix in SAFE_PREFIXES)
+        if not is_sub_safe:
+            return CommandClassification.RISKY
+
+    return CommandClassification.SAFE
 
 def is_safe_command(command: str) -> bool:
-    """Legacy check if a command uses a known-safe prefix."""
+    """Check if a command is classified as safe."""
     return classify_command(command) == CommandClassification.SAFE

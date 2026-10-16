@@ -111,3 +111,27 @@ async def test_web_search_rejects_empty_query() -> None:
     result = await web_search_mod.execute_web_search("   ")
     assert result["results"] == []
     assert "empty" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_search_intent_detection() -> None:
+    from src.ai.intent import intent_detector
+
+    # Queries that should trigger web search
+    search_queries = [
+        "search yashwant rangrej on web and provide me the result of the search",
+        "who is yashwant rangrej",
+        "find online profile of yashwant rangrej",
+        "search for latest fastapi docs",
+        "trending repositories on github",
+        "browse the web for python 3.13 features",
+    ]
+    for q in search_queries:
+        assert intent_detector.is_search_query(q) is True
+        assert await intent_detector.is_friendly_chat(q) is False
+
+    # Standard greetings and coding actions should NOT be search queries
+    assert intent_detector.is_search_query("hello") is False
+    assert intent_detector.is_search_query("create a new file main.py") is False
+    assert intent_detector.is_search_query("run pytest") is False
+

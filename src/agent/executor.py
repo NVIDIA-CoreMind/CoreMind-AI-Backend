@@ -162,6 +162,8 @@ class AgentExecutor:
                         })
                         continue
                     is_approved = True
+                else:
+                    is_approved = True
 
                 # Execute the tool
                 result = await self._tool_executor.execute_tool_call(
@@ -264,10 +266,15 @@ class AgentExecutor:
                         })
 
                 if canonical_name in ("terminal", "run_terminal", "sandbox_execute", "run_tests", "run_build"):
+                    stdout_str = inner.get("stdout") or inner.get("output") or ""
+                    stderr_str = inner.get("stderr") or ""
+                    full_out = f"{stdout_str}\n{stderr_str}".strip() if stderr_str else stdout_str
+                    cmd_str = inner.get("command", "") or args.get("command") or args.get("test_command") or args.get("build_command") or ""
                     await self._emit(EventType.COMMAND_COMPLETED, {
-                        "command": inner.get("command", ""),
+                        "command": cmd_str,
                         "exit_code": inner.get("exit_code", 0),
                         "success": inner.get("success", True),
+                        "output": full_out,
                     })
 
                 # Emit tool completed event

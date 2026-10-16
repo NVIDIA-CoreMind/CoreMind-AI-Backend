@@ -49,11 +49,15 @@ def _is_simple_task(task: str) -> bool:
     return False
 
 
-STRUCTURED_PLAN_PROMPT = """Analyze the following coding task and generate a structured JSON execution plan.
+STRUCTURED_PLAN_PROMPT = """Analyze the following coding task and generate a structured JSON execution plan following industry-standard multi-language software architecture.
 
 Task: {task}
 Project Context:
 {project_context}
+
+Rules for the Execution Plan:
+1. MANDATE INDUSTRY-STANDARD ARCHITECTURE: Never plan flat root-level monolithic files. For new features or projects, plan modular layouts matching the target language (e.g., Python: src/api, src/services, src/models; TypeScript/Web: src/components, src/styles, src/services; Go: cmd/, internal/; Rust: src/, tests/; Flutter: lib/screens, lib/widgets, lib/models).
+2. MODULAR STEPS: Decompose work into distinct stages: Scaffolding & Architecture -> Modular Components/Services -> Entrypoint Wiring -> Verification & Testing.
 
 Return ONLY valid JSON in this exact structure:
 {{
@@ -61,21 +65,27 @@ Return ONLY valid JSON in this exact structure:
   "tasks": [
     {{
       "id": "task_1",
-      "title": "Inspect codebase and relevant files",
-      "description": "Read and locate files related to the task",
+      "title": "Design and scaffold directory architecture",
+      "description": "Establish modular folders (src/, components, services) and project manifests",
       "dependencies": []
     }},
     {{
       "id": "task_2",
-      "title": "Make code edits",
-      "description": "Apply required changes cleanly",
+      "title": "Implement modular components and core services",
+      "description": "Build single-responsibility modules in designated directories",
       "dependencies": ["task_1"]
     }},
     {{
       "id": "task_3",
-      "title": "Verify changes and fix errors",
-      "description": "Run tests or linting to verify the implementation",
+      "title": "Connect application entrypoint and configs",
+      "description": "Wire components together into the main entrypoint",
       "dependencies": ["task_2"]
+    }},
+    {{
+      "id": "task_4",
+      "title": "Verify build and run verification tests",
+      "description": "Run tests, linters, or start local development server",
+      "dependencies": ["task_3"]
     }}
   ]
 }}
@@ -123,8 +133,41 @@ def _parse_task_graph_from_text(raw_text: str | None, default_goal: str) -> Task
     except Exception:
         pass
 
-    # Fallback to standard 3-stage plan
+    # Check if this is a creation / building task
+    lower_goal = default_goal.lower()
+    is_creation = any(
+        kw in lower_goal
+        for kw in ("create", "build", "make", "develop", "scaffold", "new", "website", "api", "app")
+    )
+
     graph = TaskGraph(goal=default_goal)
+    if is_creation:
+        t1 = graph.create_task(
+            task_id="task_1",
+            title="Design and scaffold directory architecture",
+            description="Initialize modular folder structure (src/, components, services, configs) matching language conventions.",
+        )
+        t2 = graph.create_task(
+            task_id="task_2",
+            title="Implement modular core logic, models, and components",
+            description="Create clean, single-responsibility files in designated directories.",
+            dependencies=[t1.id],
+        )
+        t3 = graph.create_task(
+            task_id="task_3",
+            title="Wire entrypoint and application configuration",
+            description="Connect modules into main entrypoint and configure build/run scripts.",
+            dependencies=[t2.id],
+        )
+        graph.create_task(
+            task_id="task_4",
+            title="Verify implementation and execute project tests/build",
+            description="Run syntax checks, linters, or test commands to ensure clean execution.",
+            dependencies=[t3.id],
+        )
+        return graph
+
+    # Fallback to standard 3-stage plan for maintenance / edits
     t1 = graph.create_task(
         task_id="task_1",
         title="Inspect and analyze existing code",
@@ -133,7 +176,7 @@ def _parse_task_graph_from_text(raw_text: str | None, default_goal: str) -> Task
     t2 = graph.create_task(
         task_id="task_2",
         title="Implement requested code changes",
-        description="Apply required edits or create files.",
+        description="Apply required edits cleanly according to project conventions.",
         dependencies=[t1.id],
     )
     graph.create_task(

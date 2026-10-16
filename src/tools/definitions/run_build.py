@@ -53,10 +53,13 @@ async def execute_run_build(
     cmd = build_command or _detect_build_command(project_path)
     validate_command(cmd)
 
-    logger.info("tools.run_build.start", command=cmd, cwd=project_path)
+    sess_id = _kwargs.get("session_id")
+    t_id = _kwargs.get("task_id") or agent_id
     await event_bus.emit(CoreMindEvent(
         type=EventType.COMMAND_STARTED,
         agent_id=agent_id,
+        session_id=sess_id,
+        task_id=t_id,
         data={"command": cmd, "type": "build"},
     ))
 

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
         description="Nebius Token Factory base URL",
     )
     nebius_model: str = Field(
-        default="nvidia/Nemotron-3_5-Lightning",
+        default="nvidia/Nemotron-3-Ultra-550b-a55b",
         description="Default NVIDIA Nemotron model ID",
     )
 
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     coremind_backend_port: int = Field(default=43110)
 
     # ── Agent Limits ────────────────────────────────────────────────
-    max_agent_steps: int = Field(default=20, ge=1, le=100)
+    max_agent_steps: int = Field(default=50, ge=1, le=100)
     default_command_timeout_ms: int = Field(default=120_000, ge=1000)
 
     # ── Limited Agent Memory ────────────────────────────────────────

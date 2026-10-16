@@ -121,10 +121,10 @@ async def execute_terminal(
 
         async def _read_stream(reader: asyncio.StreamReader, is_err: bool) -> None:
             while True:
-                line = await reader.readline()
-                if not line:
+                chunk = await reader.read(1024)
+                if not chunk:
                     break
-                decoded = line.decode("utf-8", errors="replace")
+                decoded = chunk.decode("utf-8", errors="replace")
                 if is_err:
                     stderr_chunks.append(decoded)
                 else:

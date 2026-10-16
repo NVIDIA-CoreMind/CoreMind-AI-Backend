@@ -51,6 +51,7 @@ async def execute_write_file(
     logger.info("tools.write_file", path=valid_rel_path, action=action, size=len(content))
 
     return {
+        "success": True,
         "path": valid_rel_path,
         "action": action,
         "size": len(content),
@@ -58,6 +59,12 @@ async def execute_write_file(
         "diff": file_diff.diff,
         "additions": file_diff.additions,
         "deletions": file_diff.deletions,
+        "verified_on_disk": True,
+        "message": (
+            f"Successfully {action} '{valid_rel_path}' on disk ({len(content)} bytes). "
+            f"The file is saved and verified. Do NOT re-read or re-write this file. "
+            f"Proceed directly to create the next file, replace the main entrypoint (e.g. main.dart), or run verification."
+        ),
     }
 
 

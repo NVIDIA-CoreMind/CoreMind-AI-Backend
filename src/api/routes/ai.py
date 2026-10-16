@@ -125,17 +125,47 @@ def _build_sanitized_messages(
     return messages
 
 
+async def _execute_live_search_context(query: str) -> str:
+    """Run live web search via Tavily/DDG and format results as prompt context."""
+    from src.config import settings
+    from src.tools.definitions.web_search import execute_web_search
+
+    try:
+        logger.info("api.ai.chat.live_search", query=query[:80])
+        search_res = await execute_web_search(query, max_results=settings.web_search_max_results)
+        if search_res and search_res.get("results"):
+            extra = "\n\n[Live Web Search Results (Tavily/DDG)]:\n"
+            for r in search_res["results"]:
+                extra += f"- {r.get('title')}: {r.get('snippet')} ({r.get('url')})\n"
+            extra += (
+                "\nINSTRUCTIONS: Answer the user's question accurately using the live web search results above. "
+                "Always provide markdown links to the sources. Never claim you cannot browse the web."
+            )
+            return extra
+    except Exception as e:
+        logger.warn("api.ai.chat.live_search_failed", error=str(e))
+    return ""
+
+
 @core_router.post("/chat/stream")
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     """
     Stream AI code generation and assistant responses via Server-Sent Events (SSE).
     Unthrottled token streaming without artificial delays or rate limiting.
     """
+    from src.ai.intent import intent_detector
+
     query_text = request.effective_query
     history = request.effective_history
     provider = get_ai_provider()
 
     logger.info("api.ai.chat.stream", query=query_text[:50], history_len=len(history))
+
+    if intent_detector.is_search_query(query_text):
+        search_extra = await _execute_live_search_context(query_text)
+        if search_extra:
+            query_text += search_extra
+
     messages = _build_sanitized_messages(query_text, history)
 
     async def _event_generator() -> AsyncIterator[str]:
@@ -183,20 +213,33 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 @core_router.post("/friendly")
 async def friendly_chat(request: ChatRequest) -> dict[str, Any]:
     """Dedicated endpoint for fast, conversational AI chat without workspace mutations."""
+    from src.ai.intent import intent_detector
     from src.utils.ids import agent_id as gen_agent_id
 
     query_text = request.effective_query
     history = request.effective_history
     logger.info("api.ai.chat.friendly", query=query_text[:50])
 
+    system_prompt = (
+        "You are CoreMind AI, an ultra-fast, intelligent coding assistant. "
+        "Provide clear, direct, and concise answers."
+    )
+
+    if intent_detector.is_search_query(query_text):
+        search_extra = await _execute_live_search_context(query_text)
+        if search_extra:
+            query_text += search_extra
+            system_prompt = (
+                "You are CoreMind AI, an intelligent coding assistant with live web search capabilities. "
+                "Answer the user accurately using the provided live search results. "
+                "Provide markdown links to sources. Never claim you cannot browse the web."
+            )
+
     provider = get_ai_provider()
     chat_messages = _build_sanitized_messages(
         query_text,
         history,
-        system_prompt=(
-            "You are CoreMind AI, an ultra-fast, intelligent coding assistant. "
-            "Provide clear, direct, and concise answers."
-        ),
+        system_prompt=system_prompt,
     )
 
     try:
@@ -230,6 +273,7 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     from src.project.project_manager import project_manager
     from src.utils.ids import agent_id as gen_agent_id
     from src.utils.ids import session_id as gen_session_id
+    from src.ai.intent import intent_detector
 
     query_text = request.effective_query
     history = request.effective_history
@@ -240,10 +284,15 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
     aid = gen_agent_id()
     sid = gen_session_id()
 
-    # Detect if it's a friendly chat — now instant (no LLM call)
-    from src.ai.intent import intent_detector
+    # If it's a live search query, fetch live web search results immediately
+    is_search = intent_detector.is_search_query(query_text)
+    if is_search:
+        search_extra = await _execute_live_search_context(query_text)
+        if search_extra:
+            query_text += search_extra
 
-    if await intent_detector.is_friendly_chat(query_text):
+    # Detect if it's a friendly chat — now instant (no LLM call)
+    if not is_search and await intent_detector.is_friendly_chat(query_text):
         provider = get_ai_provider()
         chat_messages = _build_sanitized_messages(
             query_text,
@@ -276,56 +325,22 @@ async def chat_with_tools(request: ChatRequest) -> dict[str, Any]:
                 detail=f"AI Provider error during chat completion: {str(exc)}",
             )
 
-
     # Ensure project is opened
-    if project_manager.get_project(request.project_path) is None:
-        await project_manager.open_project(request.project_path)
-
-    # --- AUTO-SEARCH: Run concurrently (non-blocking) ---
-    import asyncio
-
-    query_lower = request.query.lower()
-    search_task = None
-    if any(kw in query_lower for kw in ("search", "trending", "latest", "look up", "current", "github")):
-        from src.tools.definitions.web_search import execute_web_search
-
-        async def _do_search() -> str | None:
-            try:
-                logger.info("api.ai.chat.auto_search", query=request.query)
-                search_res = await execute_web_search(request.query, max_results=3)
-                if search_res and search_res.get("results"):
-                    extra = "\n\n[System Auto-Search Results Provided for Context]:\n"
-                    for r in search_res["results"]:
-                        extra += f"- {r.get('title')}: {r.get('snippet')} ({r.get('url')})\n"
-                    return extra
-            except Exception as e:
-                logger.warn("api.ai.chat.auto_search_failed", error=str(e))
-            return None
-
-        search_task = asyncio.create_task(_do_search())
-
-    # If search was started, await it (with a short timeout so it doesn't block forever)
-    if search_task is not None:
-        try:
-            search_extra = await asyncio.wait_for(search_task, timeout=5.0)
-            if search_extra:
-                request.query += search_extra
-        except asyncio.TimeoutError:
-            logger.warn("api.ai.chat.auto_search_timeout")
-    # --------------------------
+    if project_manager.get_project(proj_path) is None:
+        await project_manager.open_project(proj_path)
 
     agent_task = AgentTask(
         task_id=aid,
         session_id=sid,
         agent_id=aid,
-        task=request.query,
-        project_path=request.project_path,
+        task=query_text,
+        project_path=proj_path,
     )
 
     loop = AgentLoop(agent_task)
 
     # Inject history into context manager
-    for msg in request.history:
+    for msg in history:
         if msg.role == "user":
             loop._context.add_user_message(msg.content)
         elif msg.role == "assistant":
