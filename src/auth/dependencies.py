@@ -19,20 +19,11 @@ from src.utils.errors import AuthError, ErrorCode
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-) -> User:
+def resolve_user_from_token(token: str) -> User:
     """
-    Validate the Bearer token in the Authorization header.
-    Returns the authenticated User model.
+    Validates an access token and returns the user it belongs to.
+    Raises AuthError when the token or its user is not acceptable.
     """
-    if credentials is None:
-        raise AuthError(
-            ErrorCode.AUTH_UNAUTHORIZED,
-            "Missing Authorization Bearer token header.",
-        )
-
-    token = credentials.credentials
     payload = decode_token(token, expected_type="access")
     user_id = payload.get("sub")
     if not user_id:
@@ -52,6 +43,21 @@ async def get_current_user(
         )
 
     return user
+
+
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+) -> User:
+    """
+    Validate the Bearer token in the Authorization header.
+    Returns the authenticated User model.
+    """
+    if credentials is None:
+        raise AuthError(
+            ErrorCode.AUTH_UNAUTHORIZED,
+            "Missing Authorization Bearer token header.",
+        )
+    return resolve_user_from_token(credentials.credentials)
 
 
 async def get_current_active_user(

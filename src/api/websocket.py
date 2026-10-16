@@ -12,11 +12,25 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from src.auth.dependencies import resolve_user_from_token
 from src.events.event_bus import event_bus
 from src.events.events import CoreMindEvent
 from src.utils.logger import logger
 
 router = APIRouter()
+
+
+WS_AUTH_PROTOCOL = "coremind.auth"
+
+
+def _requested_subprotocols(websocket: WebSocket) -> list[str]:
+    raw = websocket.headers.get("sec-websocket-protocol", "")
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _negotiated_subprotocol(websocket: WebSocket) -> str | None:
+    """Echoes the auth marker back so browsers complete the handshake."""
+    return WS_AUTH_PROTOCOL if WS_AUTH_PROTOCOL in _requested_subprotocols(websocket) else None
 
 
 class ConnectionManager:
@@ -26,7 +40,7 @@ class ConnectionManager:
         self._connections: list[WebSocket] = []
 
     async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
+        await websocket.accept(subprotocol=_negotiated_subprotocol(websocket))
         self._connections.append(websocket)
         logger.info("websocket.connected", total=len(self._connections))
 
@@ -56,8 +70,32 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 
 
+def _websocket_authorized(websocket: WebSocket) -> bool:
+    """
+    Accepts a valid access token sent as a subprotocol: ["coremind.auth", "<token>"].
+    The token stays out of the URL, so it does not appear in access logs.
+    """
+    protocols = _requested_subprotocols(websocket)
+    if WS_AUTH_PROTOCOL not in protocols:
+        return False
+    tokens = [p for p in protocols if p != WS_AUTH_PROTOCOL]
+    if len(tokens) != 1:
+        return False
+    token = tokens[0]
+    try:
+        resolve_user_from_token(token)
+    except Exception:
+        # Fail closed: any token problem refuses the connection.
+        return False
+    return True
+
+
 async def _handle_client_connection(websocket: WebSocket, client_id: str = "default") -> None:
     """Core WebSocket connection lifecycle for IDE ↔ Backend streaming."""
+    if not _websocket_authorized(websocket):
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
     await ws_manager.connect(websocket)
 
     # Subscribe to all events and forward to this connection

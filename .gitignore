@@ -50,3 +50,6 @@ tmp/
 
 # ruff
 .ruff_cache/
+
+# Local databases (may contain user data)
+data/*.db
