@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Expose the port the app runs on (matching standard cloud deployments, often 8080 or 8000)
+# Port the app listens on inside the container. Cloud hosts set PORT; 8080 is the default.
 EXPOSE 8080
 
-# Default command to start the FastAPI server
-CMD ["uvicorn", "src.app.bootstrap:app", "--host", "0.0.0.0", "--port", "8080"]
+# Start the FastAPI server. 0.0.0.0 is required inside the container so published ports can reach it.
+CMD ["sh", "-c", "uvicorn src.app.bootstrap:app --host 0.0.0.0 --port ${PORT:-8080}"]

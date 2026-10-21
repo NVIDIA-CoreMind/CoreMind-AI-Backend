@@ -1,0 +1,5 @@
+{$DOMAIN} {
+	encode gzip
+	# Caddy proxies WebSocket upgrades automatically; /ws needs no extra rule.
+	reverse_proxy backend:8080
+}

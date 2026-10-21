@@ -13,3 +13,6 @@ venv/
 .ruff_cache/
 .mypy_cache/
 coremind_backend.egg-info/
+# Local databases may contain user data. They must never be baked into an image.
+data/
+*.db
