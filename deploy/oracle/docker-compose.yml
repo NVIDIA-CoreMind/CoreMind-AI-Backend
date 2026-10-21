@@ -1,0 +1,36 @@
+# Runs the CoreMind backend behind Caddy, which terminates HTTPS and proxies
+# HTTP and WebSocket traffic. The backend port is not published to the host.
+#
+# Run from this directory on the VM:  docker compose up -d --build
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend.env
+    environment:
+      PORT: "8080"
+    volumes:
+      - coremind-data:/app/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/oracle/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  coremind-data:
+  caddy-data:
+  caddy-config:
