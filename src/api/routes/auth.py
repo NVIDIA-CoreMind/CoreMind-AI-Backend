@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.auth.dependencies import get_current_user, get_optional_user
@@ -33,6 +33,7 @@ from src.auth.models import (
 )
 from src.auth.oauth_states import OAuthStateStore
 from src.auth.service import auth_service
+from src.config import settings
 from src.utils.logger import logger
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -89,25 +90,56 @@ oauth_session_store = OAuthSessionCache()
 oauth_states = OAuthStateStore()
 
 
+def _first_header_value(request: Request, name: str) -> str | None:
+    """The first value of a header. A reverse proxy may append more hops to it."""
+    return request.headers.get(name, "").split(",")[0].strip() or None
+
+
+def _public_callback_url(request: Request) -> str:
+    """This backend's own callback address, as the browser reached it.
+
+    Behind a reverse proxy such as Render, the scheme and host come from the forwarded headers.
+    Google only sends a code to a redirect URI registered on the OAuth client, so a forged host
+    cannot complete a sign-in.
+    """
+    scheme = _first_header_value(request, "x-forwarded-proto") or request.url.scheme
+    host = (
+        _first_header_value(request, "x-forwarded-host")
+        or _first_header_value(request, "host")
+        or request.url.netloc
+    )
+    return f"{scheme}://{host}/v1/auth/google/callback"
+
+
+def _redirect_uri_for(request: Request, requested: str | None) -> str:
+    """The client's own choice, then GOOGLE_REDIRECT_URI if it is set, then this backend's address."""
+    return requested or settings.google_redirect_uri or _public_callback_url(request)
+
+
 @router.post("/google", response_model=TokenResponse)
-async def google_auth(req: GoogleAuthRequest) -> TokenResponse:
+async def google_auth(req: GoogleAuthRequest, request: Request) -> TokenResponse:
     """
     Continue with Google.
     Accepts a Google ID token (from frontend/IDE Google button)
     or an OAuth authorization code.
     """
     logger.info("api.auth.google", has_id_token=bool(req.id_token), has_code=bool(req.code))
+    if req.code and not req.redirect_uri:
+        # A code can only be exchanged with the redirect URI it was issued for.
+        req = req.model_copy(update={"redirect_uri": _redirect_uri_for(request, None)})
     return await auth_service.google_auth(req)
 
 
 @router.get("/google/url", response_model=GoogleAuthUrlResponse)
 async def get_google_auth_url(
+    request: Request,
     state: str | None = Query(default=None, description="Client state parameter"),
     redirect_uri: str | None = Query(default=None, description="Custom redirect URI"),
 ) -> GoogleAuthUrlResponse:
     """Retrieve the Google OAuth2 consent URL for browser or webview sign-in."""
-    result = auth_service.get_google_auth_url(state=state, redirect_uri=redirect_uri)
-    oauth_states.issue(result.state)
+    redirect = _redirect_uri_for(request, redirect_uri)
+    result = auth_service.get_google_auth_url(state=state, redirect_uri=redirect)
+    oauth_states.issue(result.state, redirect)
     return result
 
 
@@ -148,15 +180,19 @@ async def google_callback(
     if not code:
         return JSONResponse({"error": "No authorization code provided by Google"}, status_code=400)
 
-    # Only a state this backend issued, and has not used yet, may complete a sign-in.
-    if not state or not oauth_states.consume(state):
+    # Only a state this backend issued, and has not used yet, may complete a sign-in. Google checks
+    # the code against the redirect URI it was issued for, so the state also supplies that URI.
+    redirect_uri = oauth_states.consume(state) if state else None
+    if redirect_uri is None:
         return HTMLResponse(
             _callback_error_page("This sign-in link has expired or was not started by CoreMind."),
             status_code=400,
         )
 
     try:
-        token_response = await auth_service.google_auth(GoogleAuthRequest(code=code))
+        token_response = await auth_service.google_auth(
+            GoogleAuthRequest(code=code, redirect_uri=redirect_uri)
+        )
         token_dict = token_response.model_dump()
 
         # Held for 10 minutes and handed out once to the client that knows this state (see get_session).

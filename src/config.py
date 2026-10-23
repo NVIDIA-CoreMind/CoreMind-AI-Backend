@@ -107,9 +107,12 @@ class Settings(BaseSettings):
         default="",
         description="Google OAuth Client Secret",
     )
-    google_redirect_uri: str = Field(
-        default="http://127.0.0.1:43110/v1/auth/google/callback",
-        description="Google OAuth Redirect URI callback",
+    google_redirect_uri: str | None = Field(
+        default=None,
+        description=(
+            "Google OAuth redirect URI. Leave unset to use this backend's own address, "
+            "/v1/auth/google/callback. The URI must be registered on the Google OAuth client."
+        ),
     )
     frontend_origin: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173",

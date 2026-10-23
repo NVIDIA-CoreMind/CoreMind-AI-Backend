@@ -598,7 +598,7 @@ Settings load from the environment first, then from `.env` in the repository roo
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `30` | | Refresh token lifetime |
 | `GOOGLE_CLIENT_ID` | `""` | | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | `""` | | Google OAuth client secret. Never commit it. |
-| `GOOGLE_REDIRECT_URI` | `http://127.0.0.1:43110/v1/auth/google/callback` | | Must match the Google console |
+| `GOOGLE_REDIRECT_URI` | unset | | Optional. When unset, the callback is this backend's own address, `{scheme}://{host}/v1/auth/google/callback`, taken from `X-Forwarded-Proto` and `Host` (or `X-Forwarded-Host`). Set it only to pin a different address. The URI must be registered on the Google OAuth client. |
 | `FRONTEND_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | | Comma-separated CORS origins. `null` and any localhost port are also allowed ([SEC-14](#known-issues)). A hosted web build on another origin, such as `https://coremind-application.onrender.com`, must be listed here. Otherwise the browser blocks every response and the IDE shows "Unable to reach CoreMind backend". |
 | `SQLITE_DB_PATH` | `data/coremind.db` | | SQLite file. A relative path is resolved from the working directory. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `fatal` | Read directly by the logger |

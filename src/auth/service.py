@@ -78,7 +78,9 @@ class AuthService:
     ) -> GoogleAuthUrlResponse:
         """Construct the Google OAuth2 consent authorization URL."""
         client_id = settings.google_client_id or "coremind-google-client-id"
-        redirect = redirect_uri or settings.google_redirect_uri or "http://127.0.0.1:43110/v1/auth/google/callback"
+        redirect = redirect_uri or settings.google_redirect_uri
+        if not redirect:
+            raise AuthError(ErrorCode.AUTH_GOOGLE_FAILED, "No Google redirect URI is available.")
         state_str = state or str(uuid4())
 
         params = {

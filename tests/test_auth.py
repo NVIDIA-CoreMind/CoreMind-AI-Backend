@@ -28,6 +28,7 @@ from src.auth.models import (
 from src.auth.security import create_access_token, decode_token
 from src.auth.service import AuthService
 from src.auth.storage import UserStorage
+from src.config import settings
 from src.utils.errors import AuthError, ErrorCode
 
 
@@ -196,9 +197,10 @@ def test_api_auth_portal_ui(client: TestClient):
     assert "Continue with Google" in res.text
 
 
-def test_api_get_google_auth_url(client: TestClient):
+def test_api_get_google_auth_url(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     """Test GET /v1/auth/google/url endpoint with default and custom params."""
-    # 1. Default request
+    # 1. Default request: with GOOGLE_REDIRECT_URI unset, the callback is this backend's own address
+    monkeypatch.setattr(settings, "google_redirect_uri", None)
     res = client.get("/v1/auth/google/url")
     assert res.status_code == 200
     data = res.json()
@@ -206,7 +208,7 @@ def test_api_get_google_auth_url(client: TestClient):
     assert "client_id" in data
     assert "state" in data
     assert len(data["state"]) > 10
-    assert "http%3A%2F%2F127.0.0.1%3A43110%2Fv1%2Fauth%2Fgoogle%2Fcallback" in data["auth_url"] or "127.0.0.1" in data["auth_url"]
+    assert "http%3A%2F%2Ftestserver%2Fv1%2Fauth%2Fgoogle%2Fcallback" in data["auth_url"]
     assert "accounts.google.com" in data["auth_url"]
 
     # 2. Custom state and redirect URI
