@@ -1,0 +1,34 @@
+# Render Blueprint for the CoreMind backend.
+# Create it in the Render dashboard: New → Blueprint → select this repo and the deploy branch.
+# No secret values are stored here. Render prompts for the sync: false values once, at creation.
+#
+# Free plan limits: the service sleeps after 15 minutes without traffic, and its filesystem
+# is reset on every restart, redeploy, or sleep. SQLite data does not persist on this plan.
+services:
+  - type: web
+    name: coremind-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    # Deploy by hand from the dashboard, so a push never restarts the service unexpectedly.
+    autoDeployTrigger: off
+    envVars:
+      - key: NEBIUS_API_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Must be this service's callback URL, for example https://coremind-ai-backend.onrender.com/v1/auth/google/callback,
+      # and must be registered as an authorized redirect URI on the Google OAuth client.
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      # The hosted web IDE calls this backend from its own origin. Without it, CORS blocks every sign-in request.
+      - key: FRONTEND_ORIGIN
+        value: http://localhost:5173,http://127.0.0.1:5173,https://coremind-application.onrender.com
+      - key: SQLITE_DB_PATH
+        value: data/coremind.db
