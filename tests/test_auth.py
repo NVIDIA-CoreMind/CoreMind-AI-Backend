@@ -86,9 +86,13 @@ def test_jwt_invalid_token_type():
 
 def test_google_auth_url(auth_service: AuthService):
     """Test generating Google OAuth consent URL."""
-    res = auth_service.get_google_auth_url(state="test-state-123")
+    res = auth_service.get_google_auth_url(
+        state="test-state-123", redirect_uri="http://127.0.0.1:43110/v1/auth/google/callback"
+    )
     assert "https://accounts.google.com/o/oauth2/v2/auth" in res.auth_url
     assert "state=test-state-123" in res.auth_url
+    expected_redirect = "http%3A%2F%2F127.0.0.1%3A43110%2Fv1%2Fauth%2Fgoogle%2Fcallback"
+    assert f"redirect_uri={expected_redirect}" in res.auth_url
     assert "scope=openid+email+profile" in res.auth_url or "openid" in res.auth_url
 
 
