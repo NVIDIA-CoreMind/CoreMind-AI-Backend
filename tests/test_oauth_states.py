@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+import src.auth.oauth_states as oauth_states_module
 from src.api.routes import auth as auth_routes
 from src.app.application import create_app
 from src.auth.oauth_states import OAuthStateStore
@@ -82,3 +83,25 @@ def test_callback_rejects_a_replayed_state(monkeypatch) -> None:
     assert first.status_code == 200
     assert second.status_code == 400
     assert "expired or was not started by CoreMind" in second.text
+
+
+def test_default_window_is_thirty_minutes(tmp_path) -> None:
+    assert OAuthStateStore(str(tmp_path / "states.db")).ttl_seconds == 30 * 60
+
+
+def test_state_survives_a_slow_consent_screen(tmp_path, monkeypatch) -> None:
+    clock = [1_000_000.0]
+    monkeypatch.setattr(oauth_states_module.time, "time", lambda: clock[0])
+    store = OAuthStateStore(str(tmp_path / "states.db"))
+    store.issue("slow-sign-in")
+    clock[0] += 15 * 60
+    assert store.consume("slow-sign-in") is True
+
+
+def test_state_is_refused_after_thirty_minutes(tmp_path, monkeypatch) -> None:
+    clock = [1_000_000.0]
+    monkeypatch.setattr(oauth_states_module.time, "time", lambda: clock[0])
+    store = OAuthStateStore(str(tmp_path / "states.db"))
+    store.issue("too-slow")
+    clock[0] += 31 * 60
+    assert store.consume("too-slow") is False
