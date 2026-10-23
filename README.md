@@ -599,7 +599,7 @@ Settings load from the environment first, then from `.env` in the repository roo
 | `GOOGLE_CLIENT_ID` | `""` | | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | `""` | | Google OAuth client secret. Never commit it. |
 | `GOOGLE_REDIRECT_URI` | `http://127.0.0.1:43110/v1/auth/google/callback` | | Must match the Google console |
-| `FRONTEND_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | | Comma-separated CORS origins. `null` and any localhost port are also allowed ([SEC-14](#known-issues)). |
+| `FRONTEND_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | | Comma-separated CORS origins. `null` and any localhost port are also allowed ([SEC-14](#known-issues)). A hosted web build on another origin, such as `https://coremind-application.onrender.com`, must be listed here. Otherwise the browser blocks every response and the IDE shows "Unable to reach CoreMind backend". |
 | `SQLITE_DB_PATH` | `data/coremind.db` | | SQLite file. A relative path is resolved from the working directory. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `fatal` | Read directly by the logger |
 
