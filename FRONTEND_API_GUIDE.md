@@ -39,7 +39,7 @@
 | **Auth Portal** | HTTP | `http://localhost:43110/auth` | Built-in web login portal for testing |
 
 ### CORS Configuration
-The backend enables full CORS with `allow_origins=["*"]`, `allow_credentials=True`, `allow_methods=["*"]`, and `allow_headers=["*"]`. No Electron CORS proxy or extra bypass headers are required.
+Browser origins are allowlisted, not open to every site. The backend allows the origins in `FRONTEND_ORIGIN` (comma-separated), plus localhost, `127.0.0.1`, and `null`. Credentials, all methods, and all headers are allowed. A browser build served from any other origin, such as `https://coremind-application.onrender.com`, must be listed in `FRONTEND_ORIGIN` on the backend. Otherwise the browser blocks the response and the request fails with `Failed to fetch`. No Electron CORS proxy or extra bypass headers are required.
 
 ### Starting the Backend Locally
 ```bash
