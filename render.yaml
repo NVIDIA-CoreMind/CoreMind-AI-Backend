@@ -23,9 +23,12 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      # Must be this service's callback URL, for example https://coremind-ai-backend.onrender.com/v1/auth/google/callback,
+      # and must be registered as an authorized redirect URI on the Google OAuth client.
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      # The hosted web IDE calls this backend from its own origin. Without it, CORS blocks every sign-in request.
       - key: FRONTEND_ORIGIN
-        value: http://localhost:5173
+        value: http://localhost:5173,http://127.0.0.1:5173,https://coremind-application.onrender.com
       - key: SQLITE_DB_PATH
         value: data/coremind.db
