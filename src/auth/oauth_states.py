@@ -1,9 +1,10 @@
 """
 CoreMind Backend — Google sign-in state storage.
 
-A sign-in state is single-use and expires after 10 minutes. It is kept in the shared SQLite
-database, not in process memory, so a backend restart between starting a sign-in and the Google
-callback does not reject it. Any backend process that shares the database can complete it.
+A sign-in state is single-use and expires after 30 minutes, long enough for the password, 2FA,
+and account-picker steps on Google's consent page. It is kept in the shared SQLite database, not in
+process memory, so a backend restart between starting a sign-in and the Google callback does not
+reject it. Any backend process that shares the database can complete it.
 """
 
 from __future__ import annotations
@@ -16,8 +17,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from src.config import settings
+from src.utils.logger import logger
 
-DEFAULT_TTL_SECONDS = 600
+DEFAULT_TTL_SECONDS = 30 * 60
 
 
 class OAuthStateStore:
@@ -50,16 +52,34 @@ class OAuthStateStore:
 
     def issue(self, state: str) -> None:
         """Record a state handed to the browser for a new sign-in."""
+        now = time.time()
         with self._lock, self._get_connection() as conn:
-            conn.execute("DELETE FROM oauth_states WHERE expires_at < ?", (time.time(),))
+            conn.execute("DELETE FROM oauth_states WHERE expires_at < ?", (now,))
             conn.execute(
                 "INSERT OR REPLACE INTO oauth_states (state, expires_at) VALUES (?, ?)",
-                (state, time.time() + self.ttl_seconds),
+                (state, now + self.ttl_seconds),
             )
+        logger.info("auth.google.state_issued", state_prefix=state[:8], db_path=self.db_path)
 
     def consume(self, state: str) -> bool:
         """Return True once for an issued, unexpired state. The state is removed on success."""
+        now = time.time()
         with self._lock, self._get_connection() as conn:
-            conn.execute("DELETE FROM oauth_states WHERE expires_at < ?", (time.time(),))
-            cursor = conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
-            return cursor.rowcount == 1
+            row = conn.execute(
+                "SELECT expires_at FROM oauth_states WHERE state = ?", (state,)
+            ).fetchone()
+            conn.execute("DELETE FROM oauth_states WHERE expires_at < ?", (now,))
+            if row is None:
+                logger.warning(
+                    "auth.google.state_unknown", state_prefix=state[:8], db_path=self.db_path
+                )
+                return False
+            if row[0] < now:
+                logger.warning(
+                    "auth.google.state_expired",
+                    state_prefix=state[:8],
+                    seconds_late=round(now - row[0]),
+                )
+                return False
+            conn.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+            return True
