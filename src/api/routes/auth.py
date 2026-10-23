@@ -31,6 +31,7 @@ from src.auth.models import (
     User,
     UserResponse,
 )
+from src.auth.oauth_states import OAuthStateStore
 from src.auth.service import auth_service
 from src.utils.logger import logger
 
@@ -83,8 +84,9 @@ class OAuthSessionCache:
 
 
 oauth_session_store = OAuthSessionCache()
-# States issued by /v1/auth/google/url. A callback completes a sign-in only for a state issued here, once.
-oauth_pending_states = OAuthSessionCache()
+# States issued by /v1/auth/google/url. A callback completes a sign-in only for a state issued by a
+# backend that shares this database, once. The database survives restarts, so the state does too.
+oauth_states = OAuthStateStore()
 
 
 @router.post("/google", response_model=TokenResponse)
@@ -105,7 +107,7 @@ async def get_google_auth_url(
 ) -> GoogleAuthUrlResponse:
     """Retrieve the Google OAuth2 consent URL for browser or webview sign-in."""
     result = auth_service.get_google_auth_url(state=state, redirect_uri=redirect_uri)
-    oauth_pending_states.set(result.state, {"issued": True}, ttl_seconds=600)
+    oauth_states.issue(result.state)
     return result
 
 
@@ -147,7 +149,7 @@ async def google_callback(
         return JSONResponse({"error": "No authorization code provided by Google"}, status_code=400)
 
     # Only a state this backend issued, and has not used yet, may complete a sign-in.
-    if not state or oauth_pending_states.pop(state) is None:
+    if not state or not oauth_states.consume(state):
         return HTMLResponse(
             _callback_error_page("This sign-in link has expired or was not started by CoreMind."),
             status_code=400,
